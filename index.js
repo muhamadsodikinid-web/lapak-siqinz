@@ -4,7 +4,7 @@ const express = require('express');
 const axios = require('axios');
 const pino = require('pino');
 
-// 1. WEB SERVER EXPRESS
+// 1. WEB SERVER EXPRESS (Biar Railway dan UptimeRobot tetap aktif)
 const app = express();
 const PORT = process.env.PORT || 3000;
 app.get('/', (req, res) => res.send('Server Lapak Siqinz Stabil!'));
@@ -26,12 +26,15 @@ async function startBot() {
     const sock = makeWASocket({
         logger: pino({ level: 'fatal' }),
         auth: state,
-        printQRInTerminal: false
+        printQRInTerminal: false,
+        browser: ["Ubuntu", "Chrome", "20.0.04"]
     });
 
+    // Minta Kode Pairing dengan Jeda 8 Detik biar Websocket Matang Dulu
     if (!sock.authState.creds.registered) {
         setTimeout(async () => {
             try {
+                console.log('Mencoba meminta kode pairing dari WhatsApp...');
                 const code = await sock.requestPairingCode(NOMOR_BOT_PAIRING);
                 console.log('=============================================');
                 console.log('KODE PAIRING LU BRE: ', code);
@@ -39,7 +42,7 @@ async function startBot() {
             } catch (err) {
                 console.error('Gagal minta kode pairing:', err);
             }
-        }, 5000);
+        }, 8000);
     }
 
     sock.ev.on('connection.update', (update) => {
@@ -50,7 +53,7 @@ async function startBot() {
             if (shouldReconnect) {
                 startBot();
             } else {
-                console.log('Koneksi terputus total (Logged out). Hapus folder auth_session.');
+                console.log('Koneksi terputus total. Hapus folder auth_session jika perlu.');
             }
         } else if (connection === 'open') {
             console.log('Bot Lapak Siqinz Berhasil Terhubung Sempurna!');
@@ -59,6 +62,7 @@ async function startBot() {
 
     sock.ev.on('creds.update', saveCreds);
 
+    // HANDLER PESAN MASUK
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
         const msg = messages[0];
@@ -77,7 +81,7 @@ async function startBot() {
             try {
                 const payload = new URLSearchParams({ key: process.env.VIP_API_KEY, sign: process.env.VIP_SIGN });
                 const responAPI = await axios.post('https://vipreseller.co.id/api/profile', payload);
-                await sock.sendMessage(senderJid, { text: `Hasil: ${JSON.stringify(responAPI.data, null, 2)}` });
+                await sock.sendMessage(senderJid, { text: `Hasil:\n${JSON.stringify(responAPI.data, null, 2)}` });
             } catch (e) {
                 await sock.sendMessage(senderJid, { text: 'Gagal connect VIP Reseller.' });
             }
@@ -104,7 +108,7 @@ async function startBot() {
                     data_no: pesan[2]
                 });
                 const responAPI = await axios.post('https://vipreseller.co.id/api/game-feature', payload);
-                await sock.sendMessage(senderJid, { text: `Respon: ${JSON.stringify(responAPI.data)}` });
+                await sock.sendMessage(senderJid, { text: `Respon:\n${JSON.stringify(responAPI.data, null, 2)}` });
             } catch (e) {
                 await sock.sendMessage(senderJid, { text: 'Gagal eksekusi transaksi.' });
             }
