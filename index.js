@@ -1,148 +1,150 @@
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const express = require('express');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeInMemoryStore } = require('@whiskeysockets/baileys');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const express = require('express');
 const axios = require('axios');
+const pino = require('pino');
+const NodeCache = require('node-cache');
 
-// 1. WEB SERVER UTAMA (Wajib port dinamis Railway)
+// 1. WEB SERVER EXPRESS (Biar Railway/UptimeRobot senang)
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-app.get('/', (req, res) => {
-    res.send('Server Lapak Siqinz Melek Anti-Crash!');
-});
-
-app.listen(PORT, () => {
-    console.log(`Server express jalan di port ${PORT}`);
-});
+app.get('/', (req, res) => res.send('Server Baileys Lapak Siqinz Melek Bos!'));
+app.listen(PORT, () => console.log(`Server express jalan di port ${PORT}`));
 
 // 2. SETUP GEMINI AI & ADMIN
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const aiModel = genAI.getGenerativeModel({ 
     model: "gemini-1.5-flash",
-    systemInstruction: "Lu adalah admin CS Lapak Siqinz. Jawab pake bahasa santai (bre, lu, gua). Tugas lu melayani pertanyaan seputar top up game. Kalau ada yang mau beli, arahkan mereka buat kirim format order atau kirim bukti transfer struk pembayaran."
+    systemInstruction: "Lu adalah admin CS Lapak Siqinz. Jawab pake bahasa santai (bre, lu, gua). Tugas lu melayani pertanyaan seputar top up game."
 });
 
-const NOMOR_ADMIN = '6283878322624@c.us'; 
-const NOMOR_BOT_PAIRING = '6283878322624';
+// Ganti nomor admin (Format: 628xxxxxxxxxx tanpa @c.us)
+const NOMOR_ADMIN = '6283878322624'; 
+const NOMOR_BOT_PAIRING = '6283878322624'; // Nomor yang mau dijadiin bot
 
-// 3. SETUP WHATSAPP CLIENT (Konfigurasi paling kebal buat server Linux/Railway)
-const client = new Client({
-    authStrategy: new LocalAuth(),
-    puppeteer: {
-        headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--disable-gpu'
-        ]
+async function startBot() {
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+    const { version } = await fetchLatestBaileysVersion();
+
+    const sock = makeWASocket({
+        version,
+        logger: pino({ level: 'fatal' }),
+        auth: state,
+        printQRInTerminal: false // Kita pakai sistem Pairing Code
+    });
+
+    // Request Pairing Code otomatis kalau belum terkoneksi
+    if (!sock.authState.creds.registered) {
+        setTimeout(async () => {
+            try {
+                const code = await sock.requestPairingCode(NOMOR_BOT_PAIRING);
+                console.log('=============================================');
+                console.log('KODE PAIRING LU BRE (BAILEYS): ', code);
+                console.log('Cek tab Logs Railway, lalu tautkan di WA!');
+                console.log('=============================================');
+            } catch (err) {
+                console.error('Gagal minta kode pairing:', err);
+            }
+        }, 3000);
     }
-});
 
-// Generate Pairing Code
-client.on('qr', async () => {
-    console.log('Lagi request Kode Pairing ke server WA...');
-    try {
-        const pairingCode = await client.requestPairingCode(NOMOR_BOT_PAIRING);
-        console.log('=============================================');
-        console.log('KODE PAIRING LU BRE: ', pairingCode);
-        console.log('Cek tab "Logs" di Railway buat salin 8 digit kodenya!');
-        console.log('=============================================');
-    } catch (error) {
-        console.error('Gagal generate kode pairing:', error);
-    }
-});
-
-client.on('ready', () => {
-    console.log('Bot Lapak Siqinz berhasil tembus dan siap meluncur di Railway!');
-});
-
-// 4. HANDLER PESAN MASUK
-client.on('message', async msg => {
-    if (msg.from === 'status@broadcast' || msg.from.includes('@g.us')) return;
-
-    if (msg.body === '!ceksaldo') {
-        if (msg.from !== NOMOR_ADMIN) return;
-        msg.reply('Bentar bre, lagi ngecek brankas pusat...');
-        try {
-            const payload = new URLSearchParams({ key: process.env.VIP_API_KEY, sign: process.env.VIP_SIGN });
-            const responAPI = await axios.post('https://vipreseller.co.id/api/profile', payload);
-            msg.reply(`Hasil cek server:\n${JSON.stringify(responAPI.data, null, 2)}`);
-        } catch (error) {
-            msg.reply('Gagal connect ke VIP Reseller bre.');
+    sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect } = update;
+        if (connection === 'close') {
+            const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
+            console.log('Koneksi terputus, mencoba menyambungkan ulang...', shouldReconnect);
+            if (shouldReconnect) {
+                startBot();
+            }
+        } else if (connection === 'open') {
+            console.log('Bot Lapak Siqinz Berhasil Terhubung via Baileys!');
         }
-        return;
-    }
+    });
 
-    if (msg.body.startsWith('!proses')) {
-        if (msg.from !== NOMOR_ADMIN) return;
-        const pesan = msg.body.split(' ');
-        if (pesan.length < 3) {
-            msg.reply('Format salah Bos. Ketik: !proses [kodeproduk] [idgame]');
+    sock.ev.on('creds.update', saveCreds);
+
+    // 3. HANDLER PESAN MASUK
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        if (type !== 'notify') return;
+        const msg = messages[0];
+        if (!msg.message || msg.key.fromMe) return;
+
+        const senderJid = msg.key.remoteJid;
+        // Ambil teks pesan (bisa dari text biasa atau extended)
+        const messageContent = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+        
+        // Abaikan kalau dari grup
+        if (senderJid.endsWith('@g.us')) return;
+
+        const senderNumber = senderJid.replace('@s.whatsapp.net', '');
+
+        // A. CEK SALDO VIP RESELLER (Khusus Admin)
+        if (messageContent === '!ceksaldo') {
+            if (senderNumber !== NOMOR_ADMIN) return;
+            await sock.sendMessage(senderJid, { text: 'Bentar bre, lagi ngecek brankas pusat...' });
+            try {
+                const payload = new URLSearchParams({ key: process.env.VIP_API_KEY, sign: process.env.VIP_SIGN });
+                const responAPI = await axios.post('https://vipreseller.co.id/api/profile', payload);
+                await sock.sendMessage(senderJid, { text: `Hasil cek server:\n${JSON.stringify(responAPI.data, null, 2)}` });
+            } catch (error) {
+                await sock.sendMessage(senderJid, { text: 'Gagal connect ke VIP Reseller bre.' });
+            }
             return;
         }
 
-        const kodeProduk = pesan[1];
-        const idGame = pesan[2];
-
-        msg.reply(`Oke Bos, pesanan ${kodeProduk} buat ID ${idGame} lagi diproses...`);
-
-        try {
-            const urlTransaksi = 'https://vipreseller.co.id/api/game-feature'; 
-            const payload = new URLSearchParams({
-                key: process.env.VIP_API_KEY,
-                sign: process.env.VIP_SIGN,
-                type: 'order',
-                service: kodeProduk,
-                data_no: idGame
-            });
-
-            const responAPI = await axios.post(urlTransaksi, payload);
-            
-            if (responAPI.data && responAPI.data.result === true) {
-                msg.reply(`Top up sukses bre! ✅\nPesanan ${kodeProduk} masuk ke ID ${idGame}.`);
-            } else {
-                msg.reply(`Top up gagal bre. ❌ Keterangan: ${responAPI.data.message || 'Cek ulang ID'}`);
+        // B. EKSEKUSI TRANSAKSI OTOMATIS (Khusus Admin)
+        // Format: !proses [kodeproduk] [idgame]
+        if (messageContent.startsWith('!proses')) {
+            if (senderNumber !== NOMOR_ADMIN) {
+                await sock.sendMessage(senderJid, { text: 'Perintah khusus admin bre!' });
+                return;
             }
-        } catch (error) {
-            msg.reply('Waduh, koneksi ke VIP Reseller gangguan.');
-        }
-        return;
-    }
 
-    if (msg.hasMedia) {
-        const media = await msg.downloadMedia();
-        if (media && media.mimetype.includes('image')) {
-            msg.reply('Bentar bre, AI lagi ngecek struk lu...');
+            const pesan = messageContent.split(' ');
+            if (pesan.length < 3) {
+                await sock.sendMessage(senderJid, { text: 'Format salah Bos. Ketik: !proses [kodeproduk] [idgame]' });
+                return;
+            }
+
+            const kodeProduk = pesan[1];
+            const idGame = pesan[2];
+
+            await sock.sendMessage(senderJid, { text: `Oke Bos, pesanan ${kodeProduk} buat ID ${idGame} lagi diproses...` });
+
             try {
-                const imageParts = [{ inlineData: { data: media.data, mimeType: media.mimetype } }];
-                const promptStruk = `Cek gambar struk ini. Valid atau tidak? Jawab format JSON: {"status": "valid", "nominal": 20000, "tanggal": "12 Nov 2026", "alasan": "ok"}`;
-                
-                const result = await aiModel.generateContent([promptStruk, ...imageParts]);
-                const dataStruk = JSON.parse(result.response.text().replace(/```json|```/g, '').trim());
+                const urlTransaksi = 'https://vipreseller.co.id/api/game-feature'; 
+                const payload = new URLSearchParams({
+                    key: process.env.VIP_API_KEY,
+                    sign: process.env.VIP_SIGN,
+                    type: 'order',
+                    service: kodeProduk,
+                    data_no: idGame
+                });
 
-                if (dataStruk.status === 'valid') {
-                    msg.reply(`Sip, struk terbaca nominal Rp ${dataStruk.nominal}. Diteruskan ke Admin.`);
-                    await client.sendMessage(NOMOR_ADMIN, `🚨 *ORDERAN MASUK!*\nNominal: Rp ${dataStruk.nominal}\nBalas: *!proses [produk] [id]*`);
+                const responAPI = await axios.post(urlTransaksi, payload);
+                
+                if (responAPI.data && responAPI.data.result === true) {
+                    await sock.sendMessage(senderJid, { text: `Top up sukses bre! ✅\nPesanan ${kodeProduk} masuk ke ID ${idGame}.` });
                 } else {
-                    msg.reply(`Struk ditolak: ${dataStruk.alasan}`);
+                    await sock.sendMessage(senderJid, { text: `Top up gagal bre. ❌ Keterangan: ${responAPI.data.message || 'Cek ulang ID'}` });
                 }
             } catch (error) {
-                msg.reply('AI gagal baca gambar.');
+                await sock.sendMessage(senderJid, { text: 'Waduh, koneksi ke VIP Reseller gangguan.' });
             }
             return;
         }
-    }
 
-    try {
-        const result = await aiModel.generateContent(msg.body);
-        msg.reply(result.response.text());
-    } catch (error) {
-        msg.reply('AI lagi pusing bre.');
-    }
-});
+        // C. CHAT BIASA (Dilayani Gemini AI)
+        if (messageContent) {
+            try {
+                const result = await aiModel.generateContent(messageContent);
+                await sock.sendMessage(senderJid, { text: result.response.text() });
+            } catch (error) {
+                console.error('Gemini error:', error);
+                await sock.sendMessage(senderJid, { text: 'Sistem AI lagi pusing bre, bentar ya.' });
+            }
+        }
+    });
+}
 
-client.initialize();
+startBot();
