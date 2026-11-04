@@ -1,10 +1,16 @@
+// 0. POLYFILL CRYPTO (Wajib di baris paling atas agar Baileys tidak crash)
+const crypto = require('crypto');
+if (!globalThis.crypto) {
+    globalThis.crypto = crypto.webcrypto || crypto;
+}
+
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const express = require('express');
 const axios = require('axios');
 const pino = require('pino');
 
-// 1. EXPRESS WEB SERVER (Biarkan Railway & Health Check Tetap Aktif)
+// 1. EXPRESS WEB SERVER
 const app = express();
 const PORT = process.env.PORT || 3000;
 app.get('/', (req, res) => res.send('Server Lapak Siqinz Full-Stabil Aktif!'));
@@ -17,7 +23,6 @@ const aiModel = genAI.getGenerativeModel({
     systemInstruction: "Lu adalah admin CS Lapak Siqinz. Jawab pake bahasa santai (bre, lu, gua). Tugas lu melayani pertanyaan seputar top up game dengan ramah, jelas, dan cepat."
 });
 
-// NOMOR ADMIN & BOT (Format: 628xxx tanpa simbol + atau @)
 const NOMOR_ADMIN = '6283878322624'; 
 const NOMOR_BOT_PAIRING = '6283878322624';
 
@@ -33,7 +38,6 @@ async function startBot() {
         browser: ['Ubuntu', 'Chrome', '20.0.04']
     });
 
-    // SISTEM MINTA PAIRING CODE OTOMATIS
     if (!sock.authState.creds.registered) {
         setTimeout(async () => {
             try {
@@ -50,7 +54,6 @@ async function startBot() {
 
     sock.ev.on('creds.update', saveCreds);
 
-    // KONEKSI & RECONNECT AUTOMATION
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
@@ -68,7 +71,6 @@ async function startBot() {
         }
     });
 
-    // HANDLER PESAN MASUK
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
         const msg = messages[0];
