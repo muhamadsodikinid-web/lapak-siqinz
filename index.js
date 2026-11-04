@@ -4,7 +4,7 @@ const express = require('express');
 const axios = require('axios');
 const pino = require('pino');
 
-// 1. WEB SERVER EXPRESS
+// 1. WEB SERVER EXPRESS (Biar Railway & UptimeRobot senang)
 const app = express();
 const PORT = process.env.PORT || 3000;
 app.get('/', (req, res) => res.send('Server Baileys Lapak Siqinz Aktif!'));
@@ -26,7 +26,7 @@ async function startBot() {
 
     const sock = makeWASocket({
         version,
-        logger: pino({ level: 'silent' }), // Matikan log pino biar terminal gak spam
+        logger: pino({ level: 'silent' }),
         auth: state,
         printQRInTerminal: false
     });
@@ -70,57 +70,9 @@ async function startBot() {
         if (senderJid.endsWith('@g.us')) return;
         const senderNumber = senderJid.replace('@s.whatsapp.net', '');
 
-        // CEK SALDO
+        // A. CEK SALDO VIP RESELLER (Khusus Admin)
         if (messageContent === '!ceksaldo') {
             if (senderNumber !== NOMOR_ADMIN) return;
             await sock.sendMessage(senderJid, { text: 'Bentar bre, ngecek brankas...' });
             try {
-                const payload = new URLSearchParams({ key: process.env.VIP_API_KEY, sign: process.env.VIP_SIGN });
-                const responAPI = await axios.post('https://vipreseller.co.id/api/profile', payload);
-                await sock.sendMessage(senderJid, { text: `Hasil: ${JSON.stringify(responAPI.data, null, 2)}` });
-            } catch (e) {
-                await sock.sendMessage(senderJid, { text: 'Gagal connect VIP Reseller.' });
-            }
-            return;
-        }
-
-        // PROSES TRANSAKSI
-        if (messageContent.startsWith('!proses')) {
-            if (senderNumber !== NOMOR_ADMIN) {
-                await sock.sendMessage(senderJid, { text: 'Khusus admin bre!' });
-                return;
-            }
-            const pesan = messageContent.split(' ');
-            if (pesan.length < 3) {
-                await sock.sendMessage(senderJid, { text: 'Format: !proses [produk] [idgame]' });
-                return;
-            }
-            try {
-                const payload = new URLSearchParams({
-                    key: process.env.VIP_API_KEY,
-                    sign: process.env.VIP_SIGN,
-                    type: 'order',
-                    service: pesan[1],
-                    data_no: pesan[2]
-                });
-                const responAPI = await axios.post('https://vipreseller.co.id/api/game-feature', payload);
-                await sock.sendMessage(senderJid, { text: `Respon: ${JSON.stringify(responAPI.data)}` });
-            } catch (e) {
-                await sock.sendMessage(senderJid, { text: 'Gagal eksekusi transaksi.' });
-            }
-            return;
-        }
-
-        // CHAT AI
-        if (messageContent) {
-            try {
-                const result = await aiModel.generateContent(messageContent);
-                await sock.sendMessage(senderJid, { text: result.response.text() });
-            } catch (e) {
-                await sock.sendMessage(senderJid, { text: 'AI lagi pusing bre.' });
-            }
-        }
-    });
-}
-
-startBot();
+                const payload = new URLSearchParams({ key: process.env.VIP_API_KEY, sign: process.env.VIP_SIGN
