@@ -1,18 +1,13 @@
-// 0. SISTEM ANTI-CRASH GLOBAL
-process.on('uncaughtException', (err) => {
-    console.error('🚨 UNCAUGHT EXCEPTION:', err?.message || err);
-});
-process.on('unhandledRejection', (err) => {
-    console.error('🚨 UNHANDLED REJECTION:', err?.message || err);
-});
+process.on('uncaughtException', (err) => console.error('🚨 UNCAUGHT EXCEPTION:', err?.message || err));
+process.on('unhandledRejection', (err) => console.error('🚨 UNHANDLED REJECTION:', err?.message || err));
 
-// 1. POLYFILL CRYPTO
 const crypto = require('crypto');
 if (!globalThis.crypto) {
     globalThis.crypto = crypto.webcrypto || crypto;
 }
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+// TAMBAHAN PENTING: Import 'Browsers' buat nyamar jadi perangkat resmi
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers } = require('@whiskeysockets/baileys');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const express = require('express');
 const axios = require('axios');
@@ -22,13 +17,11 @@ const NodeCache = require('node-cache');
 
 const msgRetryCounterCache = new NodeCache();
 
-// EXPRESS WEB SERVER
 const app = express();
 const PORT = process.env.PORT || 3000;
-app.get('/', (req, res) => res.send('Server Lapak Siqinz Kebal Crash Aktif!'));
+app.get('/', (req, res) => res.send('Server Lapak Siqinz Fix Pairing Aktif!'));
 app.listen(PORT, () => console.log(`🚀 Server Express jalan di port ${PORT}`));
 
-// SETUP GEMINI AI
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 const aiModel = genAI.getGenerativeModel({ 
     model: "gemini-1.5-flash",
@@ -47,7 +40,8 @@ async function startBot() {
         logger: pino({ level: 'silent' }),
         auth: state,
         printQRInTerminal: false,
-        browser: ['Ubuntu', 'Chrome', '20.0.04'],
+        // KUNCI UTAMA FIX: Pakai identitas resmi bawaan Baileys
+        browser: Browsers.ubuntu('Chrome'), 
         msgRetryCounterCache,
         connectTimeoutMs: 60000,      
         defaultQueryTimeoutMs: 60000, 
@@ -56,9 +50,10 @@ async function startBot() {
     });
 
     if (!sock.authState.creds.registered) {
+        // Jeda agak lama (8 detik) biar handshake ke server WA bener-bener matang
         setTimeout(async () => {
             try {
-                console.log('⏳ Meminta kode pairing 8 digit...');
+                console.log('⏳ Meminta kode pairing mode aman (Anti-Shadowban)...');
                 const code = await sock.requestPairingCode(NOMOR_BOT_PAIRING);
                 console.log('\n==================================================');
                 console.log(`🔥 KODE PAIRING LU BRE: ${code}`);
@@ -66,16 +61,11 @@ async function startBot() {
             } catch (err) {
                 console.error('❌ Gagal generate Kode Pairing:', err?.message || err);
             }
-        }, 5000);
+        }, 8000);
     }
 
-    // SAFE SAVE CREDS (Biar gak crash ENOENT)
     sock.ev.on('creds.update', async () => {
-        try {
-            await saveCreds();
-        } catch (e) {
-            // Abaikan error write saat folder disapu
-        }
+        try { await saveCreds(); } catch (e) {}
     });
 
     sock.ev.on('connection.update', (update) => {
@@ -85,20 +75,11 @@ async function startBot() {
             const statusCode = (lastDisconnect?.error)?.output?.statusCode;
             console.log(`⚠️ Koneksi terputus. Status Code: ${statusCode}`);
             
-            // JIKA SESI DITOLAK / EXPIRED (401 / 403 / LoggedOut)
             if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403) {
-                console.log('🚨 Sesi ditolak WA! Menutup socket & menghapus cache lama...');
-                
+                console.log('🚨 Sesi ditolak WA! Menghapus cache lama...');
                 try { sock.end(undefined); } catch (e) {}
-                
                 setTimeout(() => {
-                    try {
-                        if (fs.existsSync('auth_session')) {
-                            fs.rmSync('auth_session', { recursive: true, force: true });
-                        }
-                    } catch (e) {
-                        console.error('Gagal hapus folder:', e.message);
-                    }
+                    try { if (fs.existsSync('auth_session')) fs.rmSync('auth_session', { recursive: true, force: true }); } catch (e) {}
                     startBot();
                 }, 2000);
             } else {
@@ -122,7 +103,6 @@ async function startBot() {
 
         if (!messageContent.trim()) return;
 
-        // COMMAND ADMIN: CEK SALDO
         if (messageContent === '!ceksaldo') {
             if (senderNumber !== NOMOR_ADMIN) return;
             await sock.sendMessage(senderJid, { text: '⏳ Bentar bre, ngecek brankas VIP Reseller...' });
@@ -136,7 +116,6 @@ async function startBot() {
             return;
         }
 
-        // COMMAND ADMIN: PROSES
         if (messageContent.startsWith('!proses')) {
             if (senderNumber !== NOMOR_ADMIN) return;
             const parts = messageContent.split(' ').filter(Boolean);
@@ -153,7 +132,6 @@ async function startBot() {
             return;
         }
 
-        // CHAT AI GEMINI
         try {
             const result = await aiModel.generateContent(messageContent);
             const responseText = result.response.text();
