@@ -1,14 +1,13 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const express = require('express');
 const axios = require('axios');
 const pino = require('pino');
-const qrcode = require('qrcode-terminal');
 
 // 1. WEB SERVER EXPRESS
 const app = express();
 const PORT = process.env.PORT || 3000;
-app.get('/', (req, res) => res.send('Server Lapak Siqinz Aktif!'));
+app.get('/', (req, res) => res.send('Server Lapak Siqinz Pairing Aktif!'));
 app.listen(PORT, () => console.log(`Server express jalan di port ${PORT}`));
 
 // 2. SETUP GEMINI AI & ADMIN
@@ -19,38 +18,49 @@ const aiModel = genAI.getGenerativeModel({
 });
 
 const NOMOR_ADMIN = '6283878322624'; 
+const NOMOR_BOT_PAIRING = '6283878322624'; // Nomor WhatsApp yang lu pakai buat bot
 
 async function startBot() {
-    // PENTING: Hapus isi folder auth_session jika sebelumnya error agar bersih total
     const { state, saveCreds } = await useMultiFileAuthState('auth_session');
+    const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
+        version,
         logger: pino({ level: 'fatal' }),
         auth: state,
-        printQRInTerminal: false
+        printQRInTerminal: false,
+        // Menyamar jadi perangkat Chrome Desktop resmi agar tidak ditolak WhatsApp
+        browser: ['Chrome (Linux)', 'Chrome', '120.0.0.0']
     });
 
-    // CETAK QR CODE KE LOGS RAILWAY
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
-        
-        if (qr) {
-            console.log('==================================================');
-            console.log('SCAN QR CODE DI BAWAH INI PAKAI WHATSAPP DI HP LU:');
-            console.log('==================================================');
-            qrcode.generate(qr, { small: true });
-        }
+    // Otomatis minta pairing code jika belum terdaftar
+    if (!sock.authState.creds.registered) {
+        setTimeout(async () => {
+            try {
+                console.log('Sedang meminta kode pairing 8 digit ke server WhatsApp...');
+                const code = await sock.requestPairingCode(NOMOR_BOT_PAIRING);
+                console.log('==================================================');
+                console.log('🔥 KODE PAIRING LU BRE: ', code);
+                console.log('==================================================');
+            } catch (err) {
+                console.error('Gagal minta kode pairing:', err);
+            }
+        }, 6000); // Jeda 6 detik biar koneksi websocket stabil dulu
+    }
 
+    sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect } = update;
+        
         if (connection === 'close') {
             const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Koneksi terputus, mencoba menyambungkan ulang...', shouldReconnect);
+            console.log('Koneksi terputus, menyambungkan ulang...', shouldReconnect);
             if (shouldReconnect) {
                 startBot();
             } else {
-                console.log('Koneksi terputus total. Sesi logout, hapus auth_session.');
+                console.log('Sesi logout. Hapus folder auth_session jika ingin pairing ulang.');
             }
         } else if (connection === 'open') {
-            console.log('🎉 BOT LAPAK SIQINZ BERHASIL TERHUBUNG SEMPURNA!');
+            console.log('🎉 BOT LAPAK SIQINZ BERHASIL TERHUBUNG DENGAN AMAN!');
         }
     });
 
