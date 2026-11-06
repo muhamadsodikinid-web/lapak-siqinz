@@ -11,15 +11,14 @@ const pino = require('pino');
 const fs = require('fs');
 const NodeCache = require('node-cache');
 
-// SETUP HTTP SERVER YANG KUAT BUAT CEGAH FLY.IO TIDUR
+// SETUP HTTP SERVER RAILWAY (Otomatis baca port dari Railway atau default 3000)
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-    res.status(200).send('Bot Lapak Siqinz 24/7 Active & Running!');
+    res.status(200).send('Bot Lapak Siqinz Railway 24/7 Active!');
 });
 
-// Endpoint tambahan buat nge-ping kesehatan server (Health Check)
 app.get('/health', (req, res) => {
     res.status(200).json({ status: 'UP', uptime: process.uptime() });
 });
@@ -34,18 +33,31 @@ const NOMOR_BOT = '6283878322624';
 let isAiActive = false;
 const msgRetryCounterCache = new NodeCache();
 
+// FUNGSI PINTAR: Pembersih String Session dari spasi atau enter nyasar
 function restoreSessionFromString() {
-    if (!process.env.SESSION_STRING) return false;
+    if (!process.env.SESSION_STRING) {
+        console.log('⚠️ Variabel SESSION_STRING kosong di Railway Variables!');
+        return false;
+    }
     try {
         if (!fs.existsSync('auth_session')) fs.mkdirSync('auth_session', { recursive: true });
-        const parsedFiles = JSON.parse(process.env.SESSION_STRING);
+        
+        // Bersihkan spasi atau enter berlebih di awal/akhir string
+        let cleanString = process.env.SESSION_STRING.trim();
+        
+        // Hapus tanda kutip luar jika tak sengaja ter-paste
+        if (cleanString.startsWith('"') && cleanString.endsWith('"')) {
+            cleanString = cleanString.slice(1, -1);
+        }
+
+        const parsedFiles = JSON.parse(cleanString);
         for (const filename in parsedFiles) {
             fs.writeFileSync(`auth_session/${filename}`, JSON.stringify(parsedFiles[filename]));
         }
-        console.log('✅ Berhasil memulihkan sesi dari Secrets Fly.io!');
+        console.log('✅ Berhasil memulihkan sesi dari Railway Variables!');
         return true;
     } catch (e) {
-        console.error('❌ Gagal memulihkan string session:', e);
+        console.error('❌ Gagal memulihkan string session:', e.message);
         return false;
     }
 }
@@ -83,7 +95,7 @@ async function startBot() {
                 setTimeout(startBot, 3000);
             }
         } else if (connection === 'open') {
-            console.log('🎉 BOT BERHASIL TERTAUT OTOMATIS DARI SESSION STRING!');
+            console.log('🎉 BOT BERHASIL TERTAUT OTOMATIS DI RAILWAY!');
         }
     });
 
