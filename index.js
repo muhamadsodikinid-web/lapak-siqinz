@@ -25,8 +25,8 @@ const VIP_API_ID = process.env.VIP_API_ID;
 const VIP_API_KEY = process.env.VIP_API_KEY;
 
 // 👑 PENGATURAN NOMOR EKSPLISIT
-const NOMOR_BOT = '6283878322624';          // Nomor WhatsApp Bot
-const NOMOR_ADMIN = '6283142628969';      // Nomor Khusus Admin / Saklar Kontrol
+const NOMOR_BOT = '6283878322624';          // Nomor WA Bot
+const NOMOR_ADMIN = '6283142628969';      // Nomor WA Admin
 
 function getVipSign() {
     if (process.env.VIP_SIGN) {
@@ -98,35 +98,35 @@ async function startBot() {
 
         const senderNumber = senderJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
         const isFromMe = msg.key.fromMe;
-        const isSelfChat = senderNumber === NOMOR_BOT || senderJid.includes(NOMOR_BOT);
 
-        // 🚨 2. BENTENG MUTLAK ANTI-NIMBRUNG:
-        // Jika pesan dikirim oleh LU SENDIRI (fromMe: true) ke ORANG LAIN, 
-        // bot langsung STOP / DIAM TOTAL (tidak bakal ngebalas atau merespon chat lu sendiri).
-        if (isFromMe && !isSelfChat) {
+        // 🚨 2. BENTENG MUTLAK ANTI-NIMBRUNG
+        // Kalau lu (WA Bot) nge-chat orang lain (selain nomor admin/bot), BOT DIAM TOTAL.
+        if (isFromMe && senderNumber !== NOMOR_BOT && senderNumber !== NOMOR_ADMIN) {
             return; 
         }
 
-        const isAdmin = senderNumber === NOMOR_ADMIN;
+        // 👑 3. VALIDASI ADMIN FLEKSIBEL
+        // Diakui admin kalau: pengirimnya NOMOR_ADMIN, atau pengirimnya NOMOR_BOT, atau pesannya lu ketik sendiri.
+        const isAdmin = senderNumber === NOMOR_ADMIN || senderNumber === NOMOR_BOT || isFromMe;
 
         let messageContent = msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || '';
-        console.log(`📩 Pesan masuk dari [${senderNumber}] | Isi: "${messageContent}" | isAdmin: ${isAdmin}`);
+        console.log(`📩 Pesan dari [${senderNumber}] | isFromMe: ${isFromMe} | isAdmin: ${isAdmin} | Teks: "${messageContent}"`);
 
         if (!messageContent.trim() && !msg.message.imageMessage) return;
 
         const isImage = msg.message.imageMessage ? true : false;
         const textLower = messageContent.toLowerCase();
 
-        // Kontrol Master Switch (Hanya bisa diakses jika pengirimnya adalah NOMOR_ADMIN: 083142628969)
+        // Kontrol Master Switch (Hanya Admin)
         if (isAdmin) {
             if (textLower === '!bot-off') {
                 isBotActive = false;
-                await sock.sendMessage(senderJid, { text: '🛑 *Bot Master OFF!* Mengabaikan semua orang.' }, { quoted: msg });
+                await sock.sendMessage(senderJid, { text: '🛑 *Bot Master OFF!* Mengabaikan pembeli.' }, { quoted: msg });
                 return;
             }
             if (textLower === '!bot-on') {
                 isBotActive = true;
-                await sock.sendMessage(senderJid, { text: '🟢 *Bot Master ON!* Bot aktif normal.' }, { quoted: msg });
+                await sock.sendMessage(senderJid, { text: '🟢 *Bot Master ON!* Bot aktif melayani pembeli.' }, { quoted: msg });
                 return;
             }
         }
@@ -139,15 +139,15 @@ async function startBot() {
                            `*📋 MENU PELANGGAN:*\n➤ *!game* (Daftar Game)\n➤ *!format* (Cara Order)\n➤ *!admin* (Hubungi Owner)\n\n`;
             
             if (isAdmin) {
-                menuText += `*👑 PANEL KHUSUS ADMIN (${NOMOR_ADMIN}):*\n` +
+                menuText += `*👑 PANEL KHUSUS ADMIN:*\n` +
                             `Status Bot Utama: ${isBotActive ? '🟢 NYALA' : '🔴 MATI'}\n` +
-                            `Status AI: *${aiMode}* (🧠 Memori & Full Auto Aktif)\n\n` +
+                            `Status AI: *${aiMode}*\n\n` +
                             `➤ *!bot-on* / *!bot-off*\n` +
-                            `➤ *!ai-topup* (Mode Auto Top-Up - Long Text)\n` +
-                            `➤ *!ai-chat* (Mode Pengganti Manusia - Short Text)\n` +
+                            `➤ *!ai-topup* (Mode Auto Top-Up)\n` +
+                            `➤ *!ai-chat* (Mode AI Manusia)\n` +
                             `➤ *!ai-off*\n` +
                             `➤ *!ceksaldo*\n` +
-                            `➤ *!proses <kode> <id>* (Tembak Manual)\n`;
+                            `➤ *!proses <kode> <id>*\n`;
             }
             await sock.sendMessage(senderJid, { text: menuText }, { quoted: msg });
             return;
@@ -163,12 +163,12 @@ async function startBot() {
             await sock.sendMessage(senderJid, { text: `📞 *Kontak Owner:* Muhamad Sodikin` }, { quoted: msg }); return;
         }
 
-        // 2. SAKLAR MODE AI (Hanya Admin)
+        // 2. SAKLAR MODE AI
         if (textLower === '!ai-topup') {
             if (!isAdmin) { await sock.sendMessage(senderJid, { text: '⚠️ Lu bukan admin, bre!' }, { quoted: msg }); return; }
             aiMode = 'TOPUP';
             chatHistories[senderJid] = []; 
-            await sock.sendMessage(senderJid, { text: '🤖 *AI Admin Top-Up (Full Auto) Aktif!* (Cek Rekening 083142628969).' }, { quoted: msg });
+            await sock.sendMessage(senderJid, { text: '🤖 *AI Admin Top-Up (Full Auto) Aktif!*' }, { quoted: msg });
             return;
         }
 
@@ -176,7 +176,7 @@ async function startBot() {
             if (!isAdmin) { await sock.sendMessage(senderJid, { text: '⚠️ Lu bukan admin, bre!' }, { quoted: msg }); return; }
             aiMode = 'CHAT';
             chatHistories[senderJid] = []; 
-            await sock.sendMessage(senderJid, { text: '👥 *AI Pengganti Manusia Aktif!* (Short Text 5-10 kata & Adaptif Bahasa).' }, { quoted: msg });
+            await sock.sendMessage(senderJid, { text: '👥 *AI Pengganti Manusia Aktif!* (Short Text & Adaptif Bahasa).' }, { quoted: msg });
             return;
         }
         
@@ -188,7 +188,7 @@ async function startBot() {
             return;
         }
 
-        // 3. API VIP RESELLER MANUAL (Hanya Admin)
+        // 3. API VIP RESELLER MANUAL
         if (textLower === '!ceksaldo') {
             if (!isAdmin) return;
             await sock.sendMessage(senderJid, { text: '⏳ Mengecek saldo ke server VIP Reseller...' }, { quoted: msg });
@@ -229,7 +229,7 @@ async function startBot() {
             return;
         }
 
-        // 4. PROSES AI DENGAN MEMORI + FULL AUTO VIP RESELLER
+        // 4. PROSES AI DENGAN MEMORI + FULL AUTO VIP
         if (aiMode !== 'OFF' && !messageContent.startsWith('!')) {
             try {
                 if (!chatHistories[senderJid]) {
