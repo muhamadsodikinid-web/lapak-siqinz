@@ -11,17 +11,11 @@ const pino = require('pino');
 const fs = require('fs');
 const NodeCache = require('node-cache');
 
-// SETUP HTTP SERVER RAILWAY (Otomatis baca port dari Railway atau default 3000)
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.get('/', (req, res) => {
-    res.status(200).send('Bot Lapak Siqinz Railway 24/7 Active!');
-});
-
-app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'UP', uptime: process.uptime() });
-});
+app.get('/', (req, res) => res.status(200).send('Bot Lapak Siqinz Railway 24/7 Active!'));
+app.get('/health', (req, res) => res.status(200).json({ status: 'UP', uptime: process.uptime() }));
 
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server HTTP Express standby di port ${PORT}`));
 
@@ -33,38 +27,8 @@ const NOMOR_BOT = '6283878322624';
 let isAiActive = false;
 const msgRetryCounterCache = new NodeCache();
 
-// FUNGSI PINTAR: Pembersih String Session dari spasi atau enter nyasar
-function restoreSessionFromString() {
-    if (!process.env.SESSION_STRING) {
-        console.log('⚠️ Variabel SESSION_STRING kosong di Railway Variables!');
-        return false;
-    }
-    try {
-        if (!fs.existsSync('auth_session')) fs.mkdirSync('auth_session', { recursive: true });
-        
-        // Bersihkan spasi atau enter berlebih di awal/akhir string
-        let cleanString = process.env.SESSION_STRING.trim();
-        
-        // Hapus tanda kutip luar jika tak sengaja ter-paste
-        if (cleanString.startsWith('"') && cleanString.endsWith('"')) {
-            cleanString = cleanString.slice(1, -1);
-        }
-
-        const parsedFiles = JSON.parse(cleanString);
-        for (const filename in parsedFiles) {
-            fs.writeFileSync(`auth_session/${filename}`, JSON.stringify(parsedFiles[filename]));
-        }
-        console.log('✅ Berhasil memulihkan sesi dari Railway Variables!');
-        return true;
-    } catch (e) {
-        console.error('❌ Gagal memulihkan string session:', e.message);
-        return false;
-    }
-}
-
 async function startBot() {
-    restoreSessionFromString();
-
+    // Railway otomatis nyimpen folder 'auth_session' secara permanen
     const { state, saveCreds } = await useMultiFileAuthState('auth_session');
     const { version } = await fetchLatestBaileysVersion();
 
@@ -81,6 +45,17 @@ async function startBot() {
         syncFullHistory: false        
     });
 
+    if (!sock.authState.creds.registered) {
+        setTimeout(async () => {
+            try {
+                const code = await sock.requestPairingCode(NOMOR_BOT);
+                console.log('\n==================================================');
+                console.log(`🔥 KODE PAIRING LU BRE: ${code}`);
+                console.log('==================================================\n');
+            } catch (err) {}
+        }, 8000);
+    }
+
     sock.ev.on('creds.update', async () => { try { await saveCreds(); } catch (e) {} });
 
     sock.ev.on('connection.update', (update) => {
@@ -89,13 +64,15 @@ async function startBot() {
             const statusCode = (lastDisconnect?.error)?.output?.statusCode;
             console.log(`⚠️ Koneksi terputus. Kode status: ${statusCode}. Menyambungkan ulang...`);
             if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403) {
+                console.log('🚨 Sesi logout dari WhatsApp. Menghapus folder sesi...');
                 try { if (fs.existsSync('auth_session')) fs.rmSync('auth_session', { recursive: true, force: true }); } catch (e) {}
                 setTimeout(startBot, 2000);
             } else {
+                // Auto reconnect otomatis tanpa hilang sesi
                 setTimeout(startBot, 3000);
             }
         } else if (connection === 'open') {
-            console.log('🎉 BOT BERHASIL TERTAUT OTOMATIS DI RAILWAY!');
+            console.log('🎉 BOT BERHASIL TERTAUT DAN AMAN DI RAILWAY!');
         }
     });
 
@@ -174,7 +151,7 @@ async function startBot() {
 
         if (isAiActive && !messageContent.startsWith('!')) {
             try {
-                let groqMessages = [{ role: "system", content: "Lu adalah asisten admin Lapak Siqinz bernama Bot Qinz. Jawab pake bahasa santai ala anak tongkrongan. Tugas lu melayani top up game dan ngecek screenshot transfer." }];
+                let groqMessages = [{ role: "system", content: "Lu adalah asisten admin Lapak Siqinz bernama Bot Qinz. Luah pake bahasa santai ala anak tongkrongan. Tugas lu melayani top up game dan ngecek screenshot transfer." }];
 
                 if (isImage) {
                     const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
