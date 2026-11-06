@@ -6,7 +6,6 @@ primary_region = "sin"
 [http_service]
   internal_port = 3000
   force_https = true
-  # INI KUNCI UTAMANYA BIAR GAK TIDUR:
   auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
