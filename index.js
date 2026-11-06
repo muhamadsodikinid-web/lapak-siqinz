@@ -17,7 +17,7 @@ const Groq = require('groq-sdk');
 const axios = require('axios');
 const pino = require('pino');
 const fs = require('fs');
-const qrcode = require('qrcode-terminal'); // 💡 Pakai qrcode-terminal ukuran kecil
+const qrcode = require('qrcode'); // 💡 Pakai modul qrcode standar buat di-render jadi teks kecil
 const NodeCache = require('node-cache');
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
@@ -37,7 +37,7 @@ const chatHistories = {};
 const msgRetryCounterCache = new NodeCache();
 
 async function startBot() {
-    const SESSION_DIR = 'sesi_qr_terminal';
+    const SESSION_DIR = 'sesi_qr_padat';
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     const { version } = await fetchLatestBaileysVersion();
 
@@ -45,7 +45,7 @@ async function startBot() {
         version,
         logger: pino({ level: 'silent' }),
         auth: state,
-        printQRInTerminal: false,
+        printQRInTerminal: false, // Kita cetak sendiri manual pake qrcode text di bawah
         browser: ['Ubuntu', 'Chrome', '20.0.04'], 
         msgRetryCounterCache,
         connectTimeoutMs: 60000,      
@@ -57,15 +57,22 @@ async function startBot() {
 
     sock.ev.on('creds.update', async () => { try { await saveCreds(); } catch (e) {} });
 
-    sock.ev.on('connection.update', (update) => {
+    sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
         
         if (qr) {
             console.log('\n==================================================');
-            console.log('📌 SCAN QR CODE DI BAWAH INI DENGAN WHATSAPP LU:');
+            console.log('📌 SCAN QR CODE DI BAWAH INI (UKURAN KECIL & RAPI):');
             console.log('==================================================\n');
-            // 💡 Mode { small: true } bikin ukuran QR-nya jadi kecil dan rapi di layar log Railway!
-            qrcode.generate(qr, { small: true });
+            
+            // 💡 Render QR jadi teks kecil yang pas dan gampang di-scan kamera HP
+            try {
+                const qrString = await qrcode.toString(qr, { type: 'terminal', small: true });
+                console.log(qrString);
+            } catch (e) {
+                console.log('Gagal render QR:', e.message);
+            }
+
             console.log('\n==================================================\n');
         }
 
@@ -197,7 +204,7 @@ ATURAN UTAMA:
 3. KETIKA ORDER OTOMATIS: Berikan format [AUTO_ORDER:KODE_LAYANAN|ID_TUJUAN] di akhir pesan.
 4. JANGAN CHAT KE GRUP.`;
 
-let groqMessages = [{ role: "system", content: systemPrompt }, ...chatHistories[senderJid]];
+                let groqMessages = [{ role: "system", content: systemPrompt }, ...chatHistories[senderJid]];
 
                 if (isImage) {
                     const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
@@ -243,7 +250,7 @@ let groqMessages = [{ role: "system", content: systemPrompt }, ...chatHistories[
                         await sock.sendMessage(senderJid, { text: responseText }, { quoted: msg });
                     }
 
-                    chatHistories[senderJid].push({ role: "user", content: messageContent });
+    chatHistories[senderJid].push({ role: "user", content: messageContent });
                     chatHistories[senderJid].push({ role: "assistant", content: responseText });
                     if (chatHistories[senderJid].length > 6) chatHistories[senderJid].splice(0, 2);
                 }
