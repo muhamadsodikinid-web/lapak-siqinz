@@ -23,7 +23,7 @@ app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server HTTP Express standby 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const VIP_API_ID = process.env.VIP_API_ID;
 const VIP_API_KEY = process.env.VIP_API_KEY;
-const NOMOR_BOT = '6283878322624'; 
+const NOMOR_BOT = '6283878322624'; // Nomor lu / nomor bot
 
 function getVipSign() {
     if (process.env.VIP_SIGN) {
@@ -34,7 +34,7 @@ function getVipSign() {
 
 let isBotActive = true;       
 let aiMode = 'OFF';           
-const chatHistories = {};     // 🧠 PUSAT MEMORI PER USER
+const chatHistories = {};     // 🧠 Memori per user
 const msgRetryCounterCache = new NodeCache();
 
 async function startBot() {
@@ -90,12 +90,22 @@ async function startBot() {
 
         const senderJid = msg.key.remoteJid;
         
-        // 🚨 1. JANGAN PERNAH BALAS CHAT DARI GRUP!
+        // 🚨 1. HARAM HUKUMNYA BALAS CHAT DARI GRUP
         if (!senderJid || senderJid.endsWith('@g.us') || senderJid === 'status@broadcast') return;
 
         const senderNumber = senderJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
-        const isAdmin = senderNumber === NOMOR_BOT || msg.key.fromMe;
-        const isFromMe = msg.key.fromMe; 
+        const isFromMe = msg.key.fromMe;
+        const isSelfChat = senderNumber === NOMOR_BOT; // Apakah ini chat ke nomor sendiri?
+
+        // 🚨 2. LOGIKA ANTI-NIMBRUNG YANG BENAR:
+        // Jika pesan dikirim oleh LU SENDIRI (fromMe: true):
+        // - Kalau itu ke nomor sendiri (isSelfChat === true), BOLEH DIBALAS (untuk atur bot / tes perintah admin).
+        // - Kalau itu ke ORANG LAIN (isSelfChat === false), BOT DIAM TOTAL (tidak bakal nimbrung!).
+        if (isFromMe && !isSelfChat) {
+            return; 
+        }
+
+        const isAdmin = isSelfChat || senderNumber === NOMOR_BOT;
 
         let messageContent = msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || '';
         if (!messageContent.trim() && !msg.message.imageMessage) return;
@@ -103,13 +113,7 @@ async function startBot() {
         const isImage = msg.message.imageMessage ? true : false;
         const textLower = messageContent.toLowerCase();
 
-        // 🚨 2. ANTI-NIMBRUNG: Kalau lu chat orang lain, bot diem total
-        const isSelfChat = senderNumber === NOMOR_BOT;
-        if (isFromMe && !isSelfChat) {
-            return; 
-        }
-
-        // Kontrol Master Switch lewat chat ke nomor sendiri
+        // Kontrol Master Switch (Lewat chat ke nomor sendiri)
         if (isAdmin && isSelfChat) {
             if (textLower === '!bot-off') {
                 isBotActive = false;
@@ -155,11 +159,11 @@ async function startBot() {
             await sock.sendMessage(senderJid, { text: `📞 *Kontak Owner:* Muhamad Sodikin` }, { quoted: msg }); return;
         }
 
-        // 2. SAKLAR MODE AI (Sekaligus reset memori ringan jika ganti mode agar tidak bentrok konteks)
+        // 2. SAKLAR MODE AI
         if (textLower === '!ai-topup') {
             if (!isAdmin) { await sock.sendMessage(senderJid, { text: '⚠️ Lu bukan admin, bre!' }, { quoted: msg }); return; }
             aiMode = 'TOPUP';
-            chatHistories[senderJid] = []; // Reset memori khusus chat ini
+            chatHistories[senderJid] = []; 
             await sock.sendMessage(senderJid, { text: '🤖 *AI Admin Top-Up Aktif!* (Long Text & Teliti Rekening 083142628969).' }, { quoted: msg });
             return;
         }
@@ -167,7 +171,7 @@ async function startBot() {
         if (textLower === '!ai-chat') {
             if (!isAdmin) { await sock.sendMessage(senderJid, { text: '⚠️ Lu bukan admin, bre!' }, { quoted: msg }); return; }
             aiMode = 'CHAT';
-            chatHistories[senderJid] = []; // Reset memori khusus chat ini
+            chatHistories[senderJid] = []; 
             await sock.sendMessage(senderJid, { text: '👥 *AI Pengganti Manusia Aktif!* (Short Text 5-10 kata & Adaptif Bahasa).' }, { quoted: msg });
             return;
         }
@@ -221,10 +225,9 @@ async function startBot() {
             return;
         }
 
-        // 4. PROSES AI DENGAN MEMORI RIWAYAT CHAT YANG BENAR
+        // 4. PROSES AI DENGAN MEMORI & PENGAMAN
         if (aiMode !== 'OFF' && !messageContent.startsWith('!')) {
             try {
-                // Inisialisasi memori user jika belum ada
                 if (!chatHistories[senderJid]) {
                     chatHistories[senderJid] = [];
                 }
@@ -248,7 +251,6 @@ ATURAN UTAMA:
 5. JANGAN PERNAH CHAT KE GRUP.`;
                 }
 
-                // Masukkan System Prompt + Riwayat Memori Chat + Pesan Terbaru User
                 let groqMessages = [
                     { role: "system", content: systemPrompt },
                     ...chatHistories[senderJid]
@@ -277,7 +279,6 @@ ATURAN UTAMA:
                 let responseText = chatCompletion.choices[0]?.message?.content || '';
                 
                 if (responseText) {
-                    // Simpan riwayat chat terbaru ke dalam memori user ini (maksimal 10 percakapan)
                     chatHistories[senderJid].push({ role: "user", content: messageContent });
                     chatHistories[senderJid].push({ role: "assistant", content: responseText });
                     if (chatHistories[senderJid].length > 10) {
