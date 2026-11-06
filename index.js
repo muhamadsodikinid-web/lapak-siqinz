@@ -25,7 +25,7 @@ const VIP_API_KEY = process.env.VIP_API_KEY;
 
 const NOMOR_BOT = '6283878322624';          
 const NOMOR_ADMIN = '6283142628969';        
-const BIAYA_ADMIN = 3000;                   // 💰 Cuan admin per transaksi
+const BIAYA_ADMIN = 3000;                   
 
 function getVipSign() {
     if (process.env.VIP_SIGN) return process.env.VIP_SIGN;
@@ -36,7 +36,9 @@ const chatHistories = {};
 const msgRetryCounterCache = new NodeCache();
 
 async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('sesi_final_lapak');
+    // 💡 FOLDER SESI DI-RESET TOTAL KE NAMA BARU
+    const SESSION_DIR = 'sesi_bersih_total';
+    const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
@@ -54,6 +56,7 @@ async function startBot() {
     });
 
     if (!sock.authState.creds.registered) {
+        // 💡 Jeda diperlama jadi 10 detik biar koneksi socket benar-benar stabil dulu sebelum minta kode
         setTimeout(async () => {
             try {
                 let code = await sock.requestPairingCode(NOMOR_BOT);
@@ -65,7 +68,7 @@ async function startBot() {
             } catch (err) {
                 console.log('\n❌ GAGAL MINTA KODE PAIRING:', err.message);
             }
-        }, 8000); 
+        }, 10000); 
     }
 
     sock.ev.on('creds.update', async () => { try { await saveCreds(); } catch (e) {} });
@@ -75,14 +78,17 @@ async function startBot() {
         if (connection === 'close') {
             const statusCode = (lastDisconnect?.error)?.output?.statusCode;
             console.log(`⚠️ Koneksi terputus. Kode status: ${statusCode}. Menyambungkan ulang...`);
+            
+            // Jika kena 401 / 403 / LoggedOut, hapus folder sesi otomatis
             if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403) {
-                try { if (fs.existsSync('sesi_final_lapak')) fs.rmSync('sesi_final_lapak', { recursive: true, force: true }); } catch (e) {}
-                setTimeout(startBot, 2000);
+                console.log('🔄 Sesi ditolak WA! Membersihkan folder sesi...');
+                try { if (fs.existsSync(SESSION_DIR)) fs.rmSync(SESSION_DIR, { recursive: true, force: true }); } catch (e) {}
+                setTimeout(startBot, 3000);
             } else {
                 setTimeout(startBot, 3000);
             }
         } else if (connection === 'open') {
-            console.log('🎉 BOT BERHASIL TERTAUT DAN AMAN DI RAILWAY!');
+            console.log('🎉 BOT BERHASIL TERTAUT DAN AMAN DI SERVER!');
         }
     });
 
@@ -98,10 +104,7 @@ async function startBot() {
         const isFromMe = msg.key.fromMe;
         const isSelfChat = senderNumber === NOMOR_BOT || senderJid.includes(NOMOR_BOT);
 
-        // 🚨 BENTENG MUTLAK ANTI-NIMBRUNG
-        if (isFromMe && !isSelfChat) {
-            return; 
-        }
+        if (isFromMe && !isSelfChat) return; 
 
         const isAdmin = senderNumber === NOMOR_ADMIN || senderNumber === NOMOR_BOT || isSelfChat;
 
@@ -111,7 +114,6 @@ async function startBot() {
         const isImage = msg.message.imageMessage ? true : false;
         const textLower = messageContent.toLowerCase();
 
-        // 1. MENU UTAMA
         if (textLower === 'menu' || textLower === '!menu') {
             let menuText = `*🎮 SELAMAT DATANG DI LAPAK SIQINZ 🎮*\n_Pusat Top Up Game Termurah & Terpercaya_\n\n` +
                            `*📋 MENU PELANGGAN:*\n` +
@@ -122,13 +124,12 @@ async function startBot() {
             if (isAdmin) {
                 menuText += `*👑 PANEL KHUSUS ADMIN:*\n` +
                             `➤ *!ceksaldo*\n` +
-                            `➤ *!proses <kode_layanan> <id>* (Tembak Manual)\n`;
+                            `➤ *!proses <kode_layanan> <id>*\n`;
             }
             await sock.sendMessage(senderJid, { text: menuText }, { quoted: msg });
             return;
         }
 
-        // 2. FITUR CEK HARGA (VIP + BIAYA ADMIN 3.000) - Dibatasi 10 item biar ringan
         if (textLower === '!price' || textLower === '!list' || textLower === '!layanan') {
             await sock.sendMessage(senderJid, { text: '⏳ Mengambil daftar harga resmi dari server VIP Reseller...' }, { quoted: msg });
             try {
@@ -137,7 +138,7 @@ async function startBot() {
                 const res = await axios.post('https://vip-reseller.co.id/api/game-feature', payload, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
                 
                 if (res.data && res.data.result && res.data.data) {
-                    let services = res.data.data.slice(0, 10); // Cukup 10 item teratas
+                    let services = res.data.data.slice(0, 10);
                     let textList = `*🔥 DAFTAR HARGA LAPAK SIQINZ 🔥*\n_(Sudah termasuk biaya admin Rp 3.000)_\n\n`;
                     
                     services.forEach((s, index) => {
@@ -162,7 +163,6 @@ async function startBot() {
             await sock.sendMessage(senderJid, { text: `📞 *Kontak Owner:* Muhamad Sodikin` }, { quoted: msg }); return;
         }
 
-        // 3. API VIP RESELLER MANUAL (ADMIN ONLY)
         if (textLower === '!ceksaldo') {
             if (!isAdmin) return;
             await sock.sendMessage(senderJid, { text: '⏳ Mengecek saldo ke VIP Reseller...' }, { quoted: msg });
@@ -193,7 +193,6 @@ async function startBot() {
             return;
         }
 
-        // 4. PROSES AI DENGAN BATASAN TOKEN AMAN (MAX_TOKENS: 250)
         if (!messageContent.startsWith('!')) {
             try {
                 if (!chatHistories[senderJid]) chatHistories[senderJid] = [];
@@ -221,7 +220,6 @@ ATURAN UTAMA:
                     groqMessages.push({ role: "user", content: messageContent });
                 }
 
-                // 💡 DIPASANG MAX_TOKENS BIAR NGGAK KENA LIMIT OLEH GROQ
                 const chatCompletion = await groq.chat.completions.create({
                     messages: groqMessages, 
                     model: "qwen/qwen3.8-27b", 
@@ -254,7 +252,7 @@ ATURAN UTAMA:
 
                     chatHistories[senderJid].push({ role: "user", content: messageContent });
                     chatHistories[senderJid].push({ role: "assistant", content: responseText });
-                    if (chatHistories[senderJid].length > 6) chatHistories[senderJid].splice(0, 2); // Riwayat dipangkas biar makin ringan
+                    if (chatHistories[senderJid].length > 6) chatHistories[senderJid].splice(0, 2);
                 }
             } catch (err) {
                 console.error('❌ Groq Error:', err?.message || err);
