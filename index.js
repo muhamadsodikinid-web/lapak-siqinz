@@ -1,16 +1,16 @@
 require('dotenv').config();
 const crypto = require('crypto');
 
-process.on('uncaughtException', (err) => console.error('🚨 [ABAIKAN] Error ringan:', err?.message));
-process.on('unhandledRejection', (err) => console.error('🚨 [ABAIKAN] Error ringan:', err?.message));
+process.on('uncaughtException', (err) => console.error('🚨 [ABAIKAN] Error:', err?.message));
+process.on('unhandledRejection', (err) => console.error('🚨 [ABAIKAN] Error:', err?.message));
 
 const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-app.get('/', (req, res) => res.status(200).send('Bot Lapak Siqinz Railway Active 24/7!'));
+app.get('/', (req, res) => res.status(200).send('Lapak Siqinz Bot 24/7 Running!'));
 app.get('/health', (req, res) => res.status(200).json({ status: 'UP' }));
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server HTTP Express standby di port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 HTTP Server standby di port ${PORT}`));
 
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const Groq = require('groq-sdk');
@@ -36,7 +36,7 @@ const chatHistories = {};
 const msgRetryCounterCache = new NodeCache();
 
 async function startBot() {
-    const SESSION_DIR = 'sesi_pairing_teks';
+    const SESSION_DIR = 'sesi_baja_putih';
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     const { version } = await fetchLatestBaileysVersion();
 
@@ -44,32 +44,30 @@ async function startBot() {
         version,
         logger: pino({ level: 'silent' }),
         auth: state,
-        printQRInTerminal: false, // Matikan QR total
-        browser: ['Ubuntu', 'Chrome', '20.0.04'], 
+        printQRInTerminal: false,
+        browser: ['Ubuntu', 'Chrome', '120.0.0.0'], 
         msgRetryCounterCache,
         connectTimeoutMs: 60000,      
         defaultQueryTimeoutMs: 60000, 
-        keepAliveIntervalMs: 10000,   
+        keepAliveIntervalMs: 15000,   
         syncFullHistory: false,       
         generateHighQualityLinkPreview: false
     });
 
+    // 💡 Kalau belum terdaftar, kita minta pairing code lewat fungsi standar yang bersih
     if (!sock.authState.creds.registered) {
         setTimeout(async () => {
             try {
-                console.log('\n⏳ Sedang meminta Kode Pairing dari WhatsApp...');
+                console.log('\n⏳ Meminta Kode Pairing WhatsApp...');
                 let code = await sock.requestPairingCode(NOMOR_BOT);
                 code = code?.match(/.{1,4}/g)?.join("-") || code;
-                
-                // 💡 CETAK BERSIH SEBAGAI TEKS BIASA DI LOG
                 console.log('\n==================================================');
-                console.log(` KODE PAIRING LU: ${code} `);
-                console.log(' (Salin kode di atas, buka WA -> Perangkat Tertaut -> Tautkan dengan nomor)');
+                console.log(` KODE PAIRING: ${code} `);
                 console.log('==================================================\n');
             } catch (err) {
-                console.log('\n❌ GAGAL MINTA KODE PAIRING:', err.message);
+                console.log('❌ Gagal minta kode pairing:', err.message);
             }
-        }, 10000); // Jeda 10 detik biar koneksi stabil dulu
+        }, 6000);
     }
 
     sock.ev.on('creds.update', async () => { try { await saveCreds(); } catch (e) {} });
@@ -78,17 +76,15 @@ async function startBot() {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
             const statusCode = (lastDisconnect?.error)?.output?.statusCode;
-            console.log(`⚠️ Koneksi terputus. Kode status: ${statusCode}. Menyambungkan ulang...`);
+            console.log(`⚠️ Koneksi terputus. Status: ${statusCode}. Reconnecting...`);
             
             if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403) {
-                console.log('🔄 Sesi ditolak WA! Membersihkan folder sesi...');
+                console.log('🔄 Sesi diblokir/expired! Membersihkan sesi...');
                 try { if (fs.existsSync(SESSION_DIR)) fs.rmSync(SESSION_DIR, { recursive: true, force: true }); } catch (e) {}
-                setTimeout(startBot, 2000);
-            } else {
-                setTimeout(startBot, 3000);
             }
+            setTimeout(startBot, 3000);
         } else if (connection === 'open') {
-            console.log('🎉 BOT BERHASIL TERTAUT DAN AMAN DI SERVER RAILWAY 24/7!');
+            console.log('🎉 BOT BERHASIL TERHUBUNG SEPENUHNYA!');
         }
     });
 
@@ -104,7 +100,7 @@ async function startBot() {
         const isFromMe = msg.key.fromMe;
         const isSelfChat = senderNumber === NOMOR_BOT || senderJid.includes(NOMOR_BOT);
 
-        if (isFromMe && !isSelfChat) return; 
+        if (isFromMe && !isSelfChat) return; // Anti-nimbrung mutlak
 
         const isAdmin = senderNumber === NOMOR_ADMIN || senderNumber === NOMOR_BOT || isSelfChat;
 
