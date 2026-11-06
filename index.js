@@ -4,7 +4,7 @@ const crypto = require('crypto');
 process.on('uncaughtException', (err) => console.error('🚨 UNCAUGHT EXCEPTION:', err?.message || err));
 process.on('unhandledRejection', (err) => console.error('🚨 UNHANDLED REJECTION:', err?.message || err));
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const Groq = require('groq-sdk');
 const express = require('express');
 const axios = require('axios');
@@ -25,7 +25,7 @@ const VIP_API_ID = process.env.VIP_API_ID;
 const VIP_API_KEY = process.env.VIP_API_KEY;
 
 // 👑 PENGATURAN NOMOR EKSPLISIT
-const NOMOR_BOT = '6283878322624';          // Nomor WhatsApp Bot
+const NOMOR_BOT = '6283878322624';          // Nomor WhatsApp Bot lu
 const NOMOR_ADMIN = '6283142628969';        // Nomor Khusus Admin
 
 function getVipSign() {
@@ -37,11 +37,10 @@ function getVipSign() {
 
 const chatHistories = {};     
 const msgRetryCounterCache = new NodeCache();
-let isBotActive = true; 
 
 async function startBot() {
-    // 💡 FOLDER SESI DIGANTI BIAR FRESH DAN NGGAK NYANGKUT!
-    const { state, saveCreds } = await useMultiFileAuthState('sesi_bot_baru');
+    // 💡 FOLDER SESI BARU & BERSIH
+    const { state, saveCreds } = await useMultiFileAuthState('sesi_paling_baru');
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
@@ -49,28 +48,29 @@ async function startBot() {
         logger: pino({ level: 'silent' }),
         auth: state,
         printQRInTerminal: false,
-        browser: Browsers.ubuntu('Chrome'), 
+        // 💡 IDENTITAS BROWSER BARU BIAR GAK DITOLAK WHATSAPP
+        browser: ['Mac OS', 'Chrome', '121.0.0.0'], 
         msgRetryCounterCache,
         connectTimeoutMs: 60000,      
         defaultQueryTimeoutMs: 60000, 
         keepAliveIntervalMs: 10000,   
-        syncFullHistory: false        
+        syncFullHistory: false,
+        markOnlineOnConnect: true
     });
 
     if (!sock.authState.creds.registered) {
         setTimeout(async () => {
             try {
                 let code = await sock.requestPairingCode(NOMOR_BOT);
-                // Bikin format kodenya rapi ada stripnya (XXXX-XXXX)
                 code = code?.match(/.{1,4}/g)?.join("-") || code;
                 console.log('\n==================================================');
                 console.log(`🔥 KODE PAIRING LU BRE: ${code}`);
+                console.log('📝 SEGERA MASUKKAN KE HP SEBELUM KADALUARSA!');
                 console.log('==================================================\n');
             } catch (err) {
-                console.log('\n❌ GAGAL MINTA KODE PAIRING:', err.message);
-                console.log('Kalau error "rate-overlimit", artinya lu terlalu sering minta kode. Tunggu 5-10 menit ya bre!\n');
+                console.log('\n❌ GAGAL MINTA KODE PAIRING:', err.message, '\n');
             }
-        }, 5000); // Waktu tunggu dipanjangin dikit biar koneksi stabil dulu
+        }, 6000); 
     }
 
     sock.ev.on('creds.update', async () => { try { await saveCreds(); } catch (e) {} });
@@ -80,8 +80,11 @@ async function startBot() {
         if (connection === 'close') {
             const statusCode = (lastDisconnect?.error)?.output?.statusCode;
             console.log(`⚠️ Koneksi terputus. Kode status: ${statusCode}. Menyambungkan ulang...`);
+            
+            // Kalau error 401 atau 403 (Sesi ditolak WA), hapus paksa foldernya biar minta kode baru
             if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403) {
-                try { if (fs.existsSync('sesi_bot_baru')) fs.rmSync('sesi_bot_baru', { recursive: true, force: true }); } catch (e) {}
+                console.log('🔄 Sesi kadaluarsa/ditolak! Menghapus file sesi lama...');
+                try { if (fs.existsSync('sesi_paling_baru')) fs.rmSync('sesi_paling_baru', { recursive: true, force: true }); } catch (e) {}
                 setTimeout(startBot, 2000);
             } else {
                 setTimeout(startBot, 3000);
@@ -106,6 +109,7 @@ async function startBot() {
         const isSelfChat = senderNumber === NOMOR_BOT || senderJid.includes(NOMOR_BOT);
 
         // 🚨 2. BENTENG MUTLAK ANTI-NIMBRUNG
+        // Kalau lu nge-chat orang lain (selain ke nomor admin/bot sendiri), bot DIAM TOTAL!
         if (isFromMe && !isSelfChat) {
             return; 
         }
@@ -191,7 +195,7 @@ async function startBot() {
                     chatHistories[senderJid] = [];
                 }
 
-                // AI SATU OTAK
+                // AI SATU OTAK DENGAN KEPRIBADIAN LU
                 const systemPrompt = `Lu adalah Muhamad Sodikin, pemilik "Lapak Siqinz". Lu punya 2 mode yang jalan otomatis:
 1. JIKA ORANG CUMA NGOBROL BIASA: Lu balas santai, ramah, agak lucu, adaptif bahasa (kalo dia Sunda, balas Sunda; kalo Indo, balas Indo). Balasan WAJIB SINGKAT 5-10 kata aja.
 2. JIKA ORANG KIRIM GAMBAR/STRUK/FORMAT ORDER: Lu langsung berubah jadi Admin Top-Up Profesional. Analisis teliti bukti transfernya: PASTIKAN rekening tujuan HARUS KE 083142628969 atas nama MUHAMAD SODIKIN.
