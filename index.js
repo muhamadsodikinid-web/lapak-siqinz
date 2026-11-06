@@ -22,7 +22,7 @@ app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server HTTP Express standby 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const VIP_API_KEY = process.env.VIP_API_KEY;
 const VIP_SIGN = process.env.VIP_SIGN;
-const NOMOR_BOT = '6283878322624'; // Pastikan nomor lu sesuai di sini
+const NOMOR_BOT = '6283878322624'; 
 
 let isAiActive = false;
 const msgRetryCounterCache = new NodeCache();
@@ -81,10 +81,7 @@ async function startBot() {
         const senderJid = msg.key.remoteJid;
         if (!senderJid || senderJid.endsWith('@g.us') || senderJid === 'status@broadcast') return;
 
-        // Ambil nomor pengirim secara akurat
         const senderNumber = senderJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
-        
-        // PEMBERSIH LOGIKA ADMIN: Karena nomor bot & admin sama, cek apakah pengirim adalah NOMOR_BOT
         const isAdmin = senderNumber === NOMOR_BOT || msg.key.fromMe;
 
         let messageContent = msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || '';
@@ -93,9 +90,7 @@ async function startBot() {
         const isImage = msg.message.imageMessage ? true : false;
         const textLower = messageContent.toLowerCase();
 
-        // ==========================================
         // 1. MENU UTAMA
-        // ==========================================
         if (textLower === 'menu' || textLower === '!menu') {
             let menuText = `*🎮 SELAMAT DATANG DI LAPAK SIQINZ 🎮*\n_Pusat Top Up Game Termurah & Terpercaya_\n\n` +
                            `*📋 MENU PELANGGAN:*\n➤ *!game* (Daftar Game)\n➤ *!format* (Cara Order)\n➤ *!admin* (Hubungi Owner)\n\n`;
@@ -118,9 +113,7 @@ async function startBot() {
             await sock.sendMessage(senderJid, { text: `📞 *Kontak Owner:* Muhamad Sodikin` }, { quoted: msg }); return;
         }
 
-        // ==========================================
-        // 2. SAKLAR AI (KHUSUS ADMIN) - DIBENERIN DI SINI
-        // ==========================================
+        // 2. SAKLAR AI
         if (textLower === '!on-ai') {
             if (!isAdmin) {
                 await sock.sendMessage(senderJid, { text: '⚠️ Lu bukan admin, bre!' }, { quoted: msg });
@@ -138,9 +131,7 @@ async function startBot() {
             return;
         }
 
-        // ==========================================
-        // 3. API VIP RESELLER (KHUSUS ADMIN)
-        // ==========================================
+        // 3. API VIP RESELLER
         if (textLower === '!ceksaldo') {
             if (!isAdmin) return;
             try {
@@ -163,9 +154,7 @@ async function startBot() {
             return;
         }
 
-        // ==========================================
-        // 4. RESPON AI VISION GROQ
-        // ==========================================
+        // 4. RESPON AI GROQ (Menggunakan model Qwen terbaru)
         if (isAiActive && !messageContent.startsWith('!')) {
             try {
                 let groqMessages = [{ role: "system", content: "Lu adalah asisten admin Lapak Siqinz bernama Bot Qinz. Jawab pake bahasa santai ala anak tongkrongan (bre, lu, gua). Tugas lu melayani top up game dan ngecek screenshot transfer." }];
@@ -185,7 +174,9 @@ async function startBot() {
                 }
 
                 const chatCompletion = await groq.chat.completions.create({
-                    messages: groqMessages, model: "llama-3.2-90b-vision-preview", temperature: 0.7,
+                    messages: groqMessages, 
+                    model: "qwen/qwen3.8-27b", // Model Qwen aktif di Groq
+                    temperature: 0.7,
                 });
                 
                 const responseText = chatCompletion.choices[0]?.message?.content || '';
