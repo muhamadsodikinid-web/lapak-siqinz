@@ -11,10 +11,20 @@ const pino = require('pino');
 const fs = require('fs');
 const NodeCache = require('node-cache');
 
+// SETUP HTTP SERVER YANG KUAT BUAT CEGAH FLY.IO TIDUR
 const app = express();
 const PORT = process.env.PORT || 3000;
-app.get('/', (req, res) => res.send('Server Lapak Siqinz (String Session Final) Aktif!'));
-app.listen(PORT, () => console.log(`🚀 Server jalan di port ${PORT}`));
+
+app.get('/', (req, res) => {
+    res.status(200).send('Bot Lapak Siqinz 24/7 Active & Running!');
+});
+
+// Endpoint tambahan buat nge-ping kesehatan server (Health Check)
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'UP', uptime: process.uptime() });
+});
+
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server HTTP Express standby di port ${PORT}`));
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const VIP_API_KEY = process.env.VIP_API_KEY;
@@ -24,7 +34,6 @@ const NOMOR_BOT = '6283878322624';
 let isAiActive = false;
 const msgRetryCounterCache = new NodeCache();
 
-// Pulihkan sesi dari Secrets Fly.io
 function restoreSessionFromString() {
     if (!process.env.SESSION_STRING) return false;
     try {
@@ -66,6 +75,7 @@ async function startBot() {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
             const statusCode = (lastDisconnect?.error)?.output?.statusCode;
+            console.log(`⚠️ Koneksi terputus. Kode status: ${statusCode}. Menyambungkan ulang...`);
             if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403) {
                 try { if (fs.existsSync('auth_session')) fs.rmSync('auth_session', { recursive: true, force: true }); } catch (e) {}
                 setTimeout(startBot, 2000);
