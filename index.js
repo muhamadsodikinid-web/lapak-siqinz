@@ -1,37 +1,35 @@
 require('dotenv').config();
 const crypto = require('crypto');
 
-process.on('uncaughtException', (err) => console.error('🚨 UNCAUGHT EXCEPTION:', err?.message || err));
-process.on('unhandledRejection', (err) => console.error('🚨 UNHANDLED REJECTION:', err?.message || err));
+process.on('uncaughtException', (err) => console.error('🚨 [ABAIKAN] Error ringan:', err?.message));
+process.on('unhandledRejection', (err) => console.error('🚨 [ABAIKAN] Error ringan:', err?.message));
+
+const express = require('express');
+const app = express();
+const PORT = process.env.PORT || 8080; // 💡 Port disesuaikan dengan standar Railway biar gak di-kill
+
+// 💡 Pancingan biar Railway ngerasa servernya sehat & gak di-restart paksa
+app.get('/', (req, res) => res.status(200).send('Bot Lapak Siqinz Railway 24/7 Active!'));
+app.get('/health', (req, res) => res.status(200).json({ status: 'UP' }));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server HTTP Express standby di port ${PORT}`));
 
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const Groq = require('groq-sdk');
-const express = require('express');
 const axios = require('axios');
 const pino = require('pino');
 const fs = require('fs');
 const NodeCache = require('node-cache');
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-app.get('/', (req, res) => res.status(200).send('Bot Lapak Siqinz Railway 24/7 Active!'));
-app.get('/health', (req, res) => res.status(200).json({ status: 'UP', uptime: process.uptime() }));
-
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server HTTP Express standby di port ${PORT}`));
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const VIP_API_ID = process.env.VIP_API_ID;
 const VIP_API_KEY = process.env.VIP_API_KEY;
 
 // 👑 PENGATURAN NOMOR EKSPLISIT
-const NOMOR_BOT = '6283878322624';          // Nomor WhatsApp Bot lu
+const NOMOR_BOT = '6283878322624';          // Nomor WhatsApp Bot
 const NOMOR_ADMIN = '6283142628969';        // Nomor Khusus Admin
 
 function getVipSign() {
-    if (process.env.VIP_SIGN) {
-        return process.env.VIP_SIGN;
-    }
+    if (process.env.VIP_SIGN) return process.env.VIP_SIGN;
     return crypto.createHash('md5').update(VIP_API_ID + VIP_API_KEY).digest('hex');
 }
 
@@ -39,23 +37,22 @@ const chatHistories = {};
 const msgRetryCounterCache = new NodeCache();
 
 async function startBot() {
-    // 💡 FOLDER SESI BARU & BERSIH
-    const { state, saveCreds } = await useMultiFileAuthState('sesi_paling_baru');
+    // 💡 Folder sesi diganti baru lagi biar 100% fresh!
+    const { state, saveCreds } = await useMultiFileAuthState('sesi_final_lapak');
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
         version,
-        logger: pino({ level: 'silent' }),
+        logger: pino({ level: 'silent' }), // Matikan log bawaan yang bikin RAM berat
         auth: state,
         printQRInTerminal: false,
-        // 💡 IDENTITAS BROWSER BARU BIAR GAK DITOLAK WHATSAPP
-        browser: ['Mac OS', 'Chrome', '121.0.0.0'], 
+        browser: ['Ubuntu', 'Chrome', '20.0.04'], // 💡 Identitas super stabil buat Pairing
         msgRetryCounterCache,
         connectTimeoutMs: 60000,      
         defaultQueryTimeoutMs: 60000, 
         keepAliveIntervalMs: 10000,   
-        syncFullHistory: false,
-        markOnlineOnConnect: true
+        syncFullHistory: false,       // 💡 Jangan sinkron chat lama biar gak berat!
+        generateHighQualityLinkPreview: false
     });
 
     if (!sock.authState.creds.registered) {
@@ -68,9 +65,9 @@ async function startBot() {
                 console.log('📝 SEGERA MASUKKAN KE HP SEBELUM KADALUARSA!');
                 console.log('==================================================\n');
             } catch (err) {
-                console.log('\n❌ GAGAL MINTA KODE PAIRING:', err.message, '\n');
+                console.log('\n❌ GAGAL MINTA KODE PAIRING:', err.message);
             }
-        }, 6000); 
+        }, 8000); // 💡 Dikasih jeda 8 detik biar server napas dulu sebelum minta kode
     }
 
     sock.ev.on('creds.update', async () => { try { await saveCreds(); } catch (e) {} });
@@ -81,10 +78,9 @@ async function startBot() {
             const statusCode = (lastDisconnect?.error)?.output?.statusCode;
             console.log(`⚠️ Koneksi terputus. Kode status: ${statusCode}. Menyambungkan ulang...`);
             
-            // Kalau error 401 atau 403 (Sesi ditolak WA), hapus paksa foldernya biar minta kode baru
             if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403) {
-                console.log('🔄 Sesi kadaluarsa/ditolak! Menghapus file sesi lama...');
-                try { if (fs.existsSync('sesi_paling_baru')) fs.rmSync('sesi_paling_baru', { recursive: true, force: true }); } catch (e) {}
+                console.log('🔄 Sesi ditolak WA! Menghapus file sesi...');
+                try { if (fs.existsSync('sesi_final_lapak')) fs.rmSync('sesi_final_lapak', { recursive: true, force: true }); } catch (e) {}
                 setTimeout(startBot, 2000);
             } else {
                 setTimeout(startBot, 3000);
@@ -100,16 +96,13 @@ async function startBot() {
         if (!msg || !msg.message) return;
 
         const senderJid = msg.key.remoteJid;
-        
-        // 🚨 1. HARAM HUKUMNYA BALAS CHAT DARI GRUP
         if (!senderJid || senderJid.endsWith('@g.us') || senderJid === 'status@broadcast') return;
 
         const senderNumber = senderJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
         const isFromMe = msg.key.fromMe;
         const isSelfChat = senderNumber === NOMOR_BOT || senderJid.includes(NOMOR_BOT);
 
-        // 🚨 2. BENTENG MUTLAK ANTI-NIMBRUNG
-        // Kalau lu nge-chat orang lain (selain ke nomor admin/bot sendiri), bot DIAM TOTAL!
+        // 🚨 BENTENG MUTLAK ANTI-NIMBRUNG
         if (isFromMe && !isSelfChat) {
             return; 
         }
@@ -122,7 +115,7 @@ async function startBot() {
         const isImage = msg.message.imageMessage ? true : false;
         const textLower = messageContent.toLowerCase();
 
-        // 1. MENU UTAMA UMUM
+        // 1. MENU UTAMA
         if (textLower === 'menu' || textLower === '!menu') {
             let menuText = `*🎮 SELAMAT DATANG DI LAPAK SIQINZ 🎮*\n_Pusat Top Up Game Termurah & Terpercaya_\n\n` +
                            `*📋 MENU PELANGGAN:*\n➤ *!game* (Daftar Game)\n➤ *!format* (Cara Order)\n➤ *!admin* (Hubungi Owner)\n\n`;
@@ -131,7 +124,7 @@ async function startBot() {
                 menuText += `*👑 PANEL KHUSUS ADMIN:*\n` +
                             `Status AI: 🟢 ALWAYS ON (Otomatis)\n` +
                             `➤ *!ceksaldo*\n` +
-                            `➤ *!proses <kode> <id>* (Tembak Manual)\n`;
+                            `➤ *!proses <kode> <id>*\n`;
             }
             await sock.sendMessage(senderJid, { text: menuText }, { quoted: msg });
             return;
@@ -147,19 +140,17 @@ async function startBot() {
             await sock.sendMessage(senderJid, { text: `📞 *Kontak Owner:* Muhamad Sodikin` }, { quoted: msg }); return;
         }
 
-        // 2. API VIP RESELLER MANUAL (HANYA BISA DIAKSES ADMIN)
+        // 2. API VIP RESELLER MANUAL (ADMIN ONLY)
         if (textLower === '!ceksaldo') {
             if (!isAdmin) return;
-            await sock.sendMessage(senderJid, { text: '⏳ Mengecek saldo ke server VIP Reseller...' }, { quoted: msg });
+            await sock.sendMessage(senderJid, { text: '⏳ Mengecek saldo ke VIP Reseller...' }, { quoted: msg });
             try {
                 const finalSign = getVipSign();
                 const payload = new URLSearchParams({ key: VIP_API_KEY, sign: finalSign });
-                const res = await axios.post('https://vip-reseller.co.id/api/profile', payload, {
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-                });
-                await sock.sendMessage(senderJid, { text: `📊 *Hasil Cek Saldo VIP:*\n\n${JSON.stringify(res.data, null, 2)}` }, { quoted: msg });
+                const res = await axios.post('https://vip-reseller.co.id/api/profile', payload, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+                await sock.sendMessage(senderJid, { text: `📊 *Hasil Cek Saldo VIP:*\n\n${JSON.stringify(res.data, null, 2)}` });
             } catch (e) {
-                await sock.sendMessage(senderJid, { text: `❌ Gagal konek VIP: ${e.message}` }, { quoted: msg });
+                await sock.sendMessage(senderJid, { text: `❌ Gagal konek VIP: ${e.message}` });
             }
             return;
         }
@@ -168,46 +159,32 @@ async function startBot() {
             if (!isAdmin) return;
             const parts = messageContent.split(' ').filter(Boolean);
             if (parts.length < 3) return;
-            await sock.sendMessage(senderJid, { text: `⏳ Memproses pesanan *${parts[1]}* ke VIP Reseller...` }, { quoted: msg });
+            await sock.sendMessage(senderJid, { text: `⏳ Memproses pesanan *${parts[1]}*...` }, { quoted: msg });
             try {
                 const finalSign = getVipSign();
-                const payload = new URLSearchParams({
-                    key: VIP_API_KEY,
-                    sign: finalSign,
-                    type: 'order',
-                    service: parts[1],
-                    data_no: parts[2]
-                });
-                const res = await axios.post('https://vip-reseller.co.id/api/game-feature', payload, {
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-                });
-                await sock.sendMessage(senderJid, { text: `📋 *Respon API VIP:*\n${JSON.stringify(res.data, null, 2)}` }, { quoted: msg });
+                const payload = new URLSearchParams({ key: VIP_API_KEY, sign: finalSign, type: 'order', service: parts[1], data_no: parts[2] });
+                const res = await axios.post('https://vip-reseller.co.id/api/game-feature', payload, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+                await sock.sendMessage(senderJid, { text: `📋 *Respon API VIP:*\n${JSON.stringify(res.data, null, 2)}` });
             } catch (e) {
-                await sock.sendMessage(senderJid, { text: `❌ Gagal eksekusi transaksi: ${e.message}` }, { quoted: msg });
+                await sock.sendMessage(senderJid, { text: `❌ Gagal eksekusi: ${e.message}` });
             }
             return;
         }
 
-        // 3. PROSES AI (SELALU AKTIF, OTOMATIS CERDAS)
+        // 3. PROSES AI (SELALU AKTIF & OTOMATIS)
         if (!messageContent.startsWith('!')) {
             try {
-                if (!chatHistories[senderJid]) {
-                    chatHistories[senderJid] = [];
-                }
+                if (!chatHistories[senderJid]) chatHistories[senderJid] = [];
 
-                // AI SATU OTAK DENGAN KEPRIBADIAN LU
                 const systemPrompt = `Lu adalah Muhamad Sodikin, pemilik "Lapak Siqinz". Lu punya 2 mode yang jalan otomatis:
-1. JIKA ORANG CUMA NGOBROL BIASA: Lu balas santai, ramah, agak lucu, adaptif bahasa (kalo dia Sunda, balas Sunda; kalo Indo, balas Indo). Balasan WAJIB SINGKAT 5-10 kata aja.
+1. JIKA ORANG CUMA NGOBROL BIASA: Lu balas santai, ramah, lucu, adaptif bahasa (kalo dia Sunda, balas Sunda; kalo Indo, balas Indo). Balasan WAJIB SINGKAT 5-10 kata aja.
 2. JIKA ORANG KIRIM GAMBAR/STRUK/FORMAT ORDER: Lu langsung berubah jadi Admin Top-Up Profesional. Analisis teliti bukti transfernya: PASTIKAN rekening tujuan HARUS KE 083142628969 atas nama MUHAMAD SODIKIN.
    - Kalau bukti VALID/ASLI, balas ramah dan lu WAJIB kasih format ini di akhir pesan: [AUTO_ORDER:KODE_LAYANAN|ID_TUJUAN] (Contoh: [AUTO_ORDER:ml5|1234567(1234)]).
    - Kalau palsu/kurang, tolak tegas tanpa format AUTO_ORDER.
 3. INGAT RIWAYAT: Selalu ingat chat sebelumnya dengan user ini.
 4. JANGAN PERNAH CHAT KE GRUP.`;
 
-                let groqMessages = [
-                    { role: "system", content: systemPrompt },
-                    ...chatHistories[senderJid]
-                ];
+                let groqMessages = [{ role: "system", content: systemPrompt }, ...chatHistories[senderJid]];
 
                 if (isImage) {
                     const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
@@ -215,7 +192,7 @@ async function startBot() {
                     groqMessages.push({
                         role: "user",
                         content: [
-                            { type: "text", text: messageContent || "Tolong cek bukti transfer dan orderan saya bre." },
+                            { type: "text", text: messageContent || "Cek bukti transfer dan orderan saya bre." },
                             { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
                         ]
                     });
@@ -233,29 +210,17 @@ async function startBot() {
                 
                 if (responseText) {
                     const autoOrderMatch = responseText.match(/\[AUTO_ORDER:(.*?)\|(.*?)\]/);
-                    
                     if (autoOrderMatch) {
                         const serviceCode = autoOrderMatch[1].trim();
                         const targetDataNo = autoOrderMatch[2].trim();
-
                         let cleanResponse = responseText.replace(/\[AUTO_ORDER:.*?\]/g, '').trim();
                         cleanResponse += `\n\n✅ *Bukti TF Valid! Sistem otomatis menembak pesanan ke VIP Reseller...*`;
                         await sock.sendMessage(senderJid, { text: cleanResponse }, { quoted: msg });
 
                         try {
                             const finalSign = getVipSign();
-                            const payload = new URLSearchParams({
-                                key: VIP_API_KEY,
-                                sign: finalSign,
-                                type: 'order',
-                                service: serviceCode,
-                                data_no: targetDataNo
-                            });
-
-                            const vipRes = await axios.post('https://vip-reseller.co.id/api/game-feature', payload, {
-                                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-                            });
-
+                            const payload = new URLSearchParams({ key: VIP_API_KEY, sign: finalSign, type: 'order', service: serviceCode, data_no: targetDataNo });
+                            const vipRes = await axios.post('https://vip-reseller.co.id/api/game-feature', payload, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
                             await sock.sendMessage(senderJid, { text: `🚀 *Status Transaksi VIP Reseller:*\n\n${JSON.stringify(vipRes.data, null, 2)}` });
                         } catch (vipErr) {
                             await sock.sendMessage(senderJid, { text: `❌ Gagal otomatis nembak ke VIP Reseller: ${vipErr.message}` });
@@ -266,9 +231,7 @@ async function startBot() {
 
                     chatHistories[senderJid].push({ role: "user", content: messageContent });
                     chatHistories[senderJid].push({ role: "assistant", content: responseText });
-                    if (chatHistories[senderJid].length > 10) {
-                        chatHistories[senderJid].splice(0, 2); 
-                    }
+                    if (chatHistories[senderJid].length > 10) chatHistories[senderJid].splice(0, 2);
                 }
             } catch (err) {
                 console.error('❌ Groq Error:', err?.message || err);
