@@ -3,7 +3,7 @@ require('dotenv').config();
 process.on('uncaughtException', (err) => console.error('🚨 UNCAUGHT EXCEPTION:', err?.message || err));
 process.on('unhandledRejection', (err) => console.error('🚨 UNHANDLED REJECTION:', err?.message || err));
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, downloadMediaMessage, BufferJSON } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const Groq = require('groq-sdk');
 const express = require('express');
 const axios = require('axios');
@@ -13,7 +13,7 @@ const NodeCache = require('node-cache');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-app.get('/', (req, res) => res.send('Server Lapak Siqinz (String Session) Aktif!'));
+app.get('/', (req, res) => res.send('Server Lapak Siqinz (String Session Final) Aktif!'));
 app.listen(PORT, () => console.log(`🚀 Server jalan di port ${PORT}`));
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
@@ -24,7 +24,7 @@ const NOMOR_BOT = '6283878322624';
 let isAiActive = false;
 const msgRetryCounterCache = new NodeCache();
 
-// Fungsi pintar buat load String Session dari Environment/Secrets Fly.io
+// Pulihkan sesi dari Secrets Fly.io
 function restoreSessionFromString() {
     if (!process.env.SESSION_STRING) return false;
     try {
@@ -42,7 +42,6 @@ function restoreSessionFromString() {
 }
 
 async function startBot() {
-    // Panggil pemulihan sesi sebelum bot dinyalain
     restoreSessionFromString();
 
     const { state, saveCreds } = await useMultiFileAuthState('auth_session');
@@ -61,53 +60,20 @@ async function startBot() {
         syncFullHistory: false        
     });
 
-    if (!sock.authState.creds.registered) {
-        setTimeout(async () => {
-            try {
-                const code = await sock.requestPairingCode(NOMOR_BOT);
-                console.log('\n==================================================');
-                console.log(`🔥 KODE PAIRING LU BRE: ${code}`);
-                console.log('==================================================\n');
-            } catch (err) {}
-        }, 8000);
-    }
-
-    sock.ev.on('creds.update', async () => { 
-        try { 
-            await saveCreds(); 
-        } catch (e) {} 
-    });
+    sock.ev.on('creds.update', async () => { try { await saveCreds(); } catch (e) {} });
 
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
             const statusCode = (lastDisconnect?.error)?.output?.statusCode;
             if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403) {
-                console.log('🚨 Sesi ditolak WA! Menghapus sesi lokal...');
                 try { if (fs.existsSync('auth_session')) fs.rmSync('auth_session', { recursive: true, force: true }); } catch (e) {}
                 setTimeout(startBot, 2000);
             } else {
                 setTimeout(startBot, 3000);
             }
         } else if (connection === 'open') {
-            console.log('🎉 BOT BERHASIL TERTAUT DI WHATSAPP!');
-            
-            // KODE SAKTI: Cetak seluruh isi folder auth_session jadi string teks mentah di Logs!
-            setTimeout(() => {
-                try {
-                    const files = fs.readdirSync('auth_session');
-                    const sessionData = {};
-                    for (const file of files) {
-                        const content = fs.readFileSync(`auth_session/${file}`, 'utf-8');
-                        sessionData[file] = JSON.parse(content);
-                    }
-                    console.log('\n================== COPY KODE DI BAWAH INI ==================');
-                    console.log(JSON.stringify(sessionData));
-                    console.log('============================================================\n');
-                } catch (e) {
-                    console.error('Gagal export session string:', e);
-                }
-            }, 5000);
+            console.log('🎉 BOT BERHASIL TERTAUT OTOMATIS DARI SESSION STRING!');
         }
     });
 
@@ -131,7 +97,6 @@ async function startBot() {
         const isImage = msg.message.imageMessage ? true : false;
         const textLower = messageContent.toLowerCase();
 
-        // 1. MENU UTAMA
         if (textLower === 'menu' || textLower === '!menu') {
             let menuText = `*🎮 SELAMAT DATANG DI LAPAK SIQINZ 🎮*\n_Pusat Top Up Game Termurah & Terpercaya_\n\n` +
                            `*📋 MENU PELANGGAN:*\n➤ *!game* (Daftar Game)\n➤ *!format* (Cara Order)\n➤ *!admin* (Hubungi Owner)\n\n`;
@@ -153,7 +118,6 @@ async function startBot() {
             await sock.sendMessage(senderJid, { text: `📞 *Kontak Owner:* Muhamad Sodikin` }, { quoted: msg }); return;
         }
 
-        // 3. SAKLAR AI 
         if (textLower === '!on-ai') {
             if (!isAdmin) return;
             isAiActive = true;
@@ -165,7 +129,6 @@ async function startBot() {
             await sock.sendMessage(senderJid, { text: '💤 *Mode AI Dimatikan!*' }, { quoted: msg }); return;
         }
 
-        // 4. API VIP RESELLER 
         if (textLower === '!ceksaldo') {
             if (!isAdmin) return;
             try {
@@ -187,7 +150,6 @@ async function startBot() {
             return;
         }
 
-        // 5. RESPON AI VISION GROQ
         if (isAiActive && !messageContent.startsWith('!')) {
             try {
                 let groqMessages = [{ role: "system", content: "Lu adalah asisten admin Lapak Siqinz bernama Bot Qinz. Jawab pake bahasa santai ala anak tongkrongan. Tugas lu melayani top up game dan ngecek screenshot transfer." }];
