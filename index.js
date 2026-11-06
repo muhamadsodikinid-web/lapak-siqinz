@@ -25,7 +25,7 @@ const VIP_API_ID = process.env.VIP_API_ID;
 const VIP_API_KEY = process.env.VIP_API_KEY;
 
 // 👑 PENGATURAN NOMOR EKSPLISIT
-const NOMOR_BOT = '6283878322624';          // Nomor WhatsApp Bot lu
+const NOMOR_BOT = '6283878322624';          // Nomor WhatsApp Bot
 const NOMOR_ADMIN = '6283142628969';        // Nomor Khusus Admin
 
 function getVipSign() {
@@ -37,9 +37,11 @@ function getVipSign() {
 
 const chatHistories = {};     
 const msgRetryCounterCache = new NodeCache();
+let isBotActive = true; 
 
 async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_session');
+    // 💡 FOLDER SESI DIGANTI BIAR FRESH DAN NGGAK NYANGKUT!
+    const { state, saveCreds } = await useMultiFileAuthState('sesi_bot_baru');
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
@@ -58,12 +60,17 @@ async function startBot() {
     if (!sock.authState.creds.registered) {
         setTimeout(async () => {
             try {
-                const code = await sock.requestPairingCode(NOMOR_BOT);
+                let code = await sock.requestPairingCode(NOMOR_BOT);
+                // Bikin format kodenya rapi ada stripnya (XXXX-XXXX)
+                code = code?.match(/.{1,4}/g)?.join("-") || code;
                 console.log('\n==================================================');
                 console.log(`🔥 KODE PAIRING LU BRE: ${code}`);
                 console.log('==================================================\n');
-            } catch (err) {}
-        }, 8000);
+            } catch (err) {
+                console.log('\n❌ GAGAL MINTA KODE PAIRING:', err.message);
+                console.log('Kalau error "rate-overlimit", artinya lu terlalu sering minta kode. Tunggu 5-10 menit ya bre!\n');
+            }
+        }, 5000); // Waktu tunggu dipanjangin dikit biar koneksi stabil dulu
     }
 
     sock.ev.on('creds.update', async () => { try { await saveCreds(); } catch (e) {} });
@@ -74,7 +81,7 @@ async function startBot() {
             const statusCode = (lastDisconnect?.error)?.output?.statusCode;
             console.log(`⚠️ Koneksi terputus. Kode status: ${statusCode}. Menyambungkan ulang...`);
             if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403) {
-                try { if (fs.existsSync('auth_session')) fs.rmSync('auth_session', { recursive: true, force: true }); } catch (e) {}
+                try { if (fs.existsSync('sesi_bot_baru')) fs.rmSync('sesi_bot_baru', { recursive: true, force: true }); } catch (e) {}
                 setTimeout(startBot, 2000);
             } else {
                 setTimeout(startBot, 3000);
@@ -99,7 +106,6 @@ async function startBot() {
         const isSelfChat = senderNumber === NOMOR_BOT || senderJid.includes(NOMOR_BOT);
 
         // 🚨 2. BENTENG MUTLAK ANTI-NIMBRUNG
-        // Kalau lu (via HP/WA Web bot) nge-chat nomor orang lain, bot bakal STOP di sini dan DIAM TOTAL.
         if (isFromMe && !isSelfChat) {
             return; 
         }
@@ -185,7 +191,7 @@ async function startBot() {
                     chatHistories[senderJid] = [];
                 }
 
-                // AI SATU OTAK: Bisa ngobrol santai ATAU jadi admin top-up secara otomatis
+                // AI SATU OTAK
                 const systemPrompt = `Lu adalah Muhamad Sodikin, pemilik "Lapak Siqinz". Lu punya 2 mode yang jalan otomatis:
 1. JIKA ORANG CUMA NGOBROL BIASA: Lu balas santai, ramah, agak lucu, adaptif bahasa (kalo dia Sunda, balas Sunda; kalo Indo, balas Indo). Balasan WAJIB SINGKAT 5-10 kata aja.
 2. JIKA ORANG KIRIM GAMBAR/STRUK/FORMAT ORDER: Lu langsung berubah jadi Admin Top-Up Profesional. Analisis teliti bukti transfernya: PASTIKAN rekening tujuan HARUS KE 083142628969 atas nama MUHAMAD SODIKIN.
@@ -222,14 +228,12 @@ async function startBot() {
                 let responseText = chatCompletion.choices[0]?.message?.content || '';
                 
                 if (responseText) {
-                    // Deteksi kalau AI minta eksekusi otomatis ke VIP Reseller
                     const autoOrderMatch = responseText.match(/\[AUTO_ORDER:(.*?)\|(.*?)\]/);
                     
                     if (autoOrderMatch) {
                         const serviceCode = autoOrderMatch[1].trim();
                         const targetDataNo = autoOrderMatch[2].trim();
 
-                        // Bersihkan tag AUTO_ORDER biar nggak kelihatan sama pembeli
                         let cleanResponse = responseText.replace(/\[AUTO_ORDER:.*?\]/g, '').trim();
                         cleanResponse += `\n\n✅ *Bukti TF Valid! Sistem otomatis menembak pesanan ke VIP Reseller...*`;
                         await sock.sendMessage(senderJid, { text: cleanResponse }, { quoted: msg });
@@ -253,11 +257,9 @@ async function startBot() {
                             await sock.sendMessage(senderJid, { text: `❌ Gagal otomatis nembak ke VIP Reseller: ${vipErr.message}` });
                         }
                     } else {
-                        // Kalo cuma chat biasa, langsung kirim
                         await sock.sendMessage(senderJid, { text: responseText }, { quoted: msg });
                     }
 
-                    // Simpan ke memori otak AI
                     chatHistories[senderJid].push({ role: "user", content: messageContent });
                     chatHistories[senderJid].push({ role: "assistant", content: responseText });
                     if (chatHistories[senderJid].length > 10) {
