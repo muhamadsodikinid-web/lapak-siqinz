@@ -7,10 +7,48 @@ process.on('unhandledRejection', (err) => console.error('🚨 [ABAIKAN] Error ri
 const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 8080;
+const qrcode = require('qrcode'); // 💡 Buat nampilin QR dalam bentuk halaman web
 
-app.get('/', (req, res) => res.status(200).send('Bot Lapak Siqinz Railway 24/7 Active!'));
+let latestQR = '';
+
+// 🌐 Halaman Web buat nampilin QR Code ukuran BESAR
+app.get('/', (req, res) => {
+    if (latestQR) {
+        res.send(`
+            <html>
+                <head>
+                    <title>QR Code Bot Lapak Siqinz</title>
+                    <meta http-equiv="refresh" content="5"> <!-- Auto-refresh tiap 5 detik -->
+                    <style>
+                        body { background: #0f172a; color: white; font-family: sans-serif; text-align: center; padding-top: 50px; }
+                        h2 { color: #38bdf8; }
+                        .container { background: #1e293b; display: inline-block; padding: 20px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+                        p { color: #94a3b8; font-size: 14px; }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <h2>🤖 SCAN QR BOT LAPAK SIQINZ</h2>
+                        <img src="${latestQR}" alt="QR Code WhatsApp" style="width: 300px; height: 300px; border-radius: 8px;" />
+                        <p>Halaman ini akan refresh otomatis.<br>Buka WA di HP -> Perangkat Tertaut -> Scan QR ini!</p>
+                    </div>
+                </body>
+            </html>
+        `);
+    } else {
+        res.send(`
+            <html>
+                <body style="background: #0f172a; color: white; font-family: sans-serif; text-align: center; padding-top: 100px;">
+                    <h2>🔄 Bot sedang menyiapkam QR Code atau sudah tersambung (Connected)...</h2>
+                    <p>Cek tab Logs Railway untuk melihat status koneksi bot.</p>
+                </body>
+            </html>
+        `);
+    }
+});
+
 app.get('/health', (req, res) => res.status(200).json({ status: 'UP' }));
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server HTTP Express standby di port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server Web QR standby di port ${PORT}`));
 
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const Groq = require('groq-sdk');
@@ -36,8 +74,7 @@ const chatHistories = {};
 const msgRetryCounterCache = new NodeCache();
 
 async function startBot() {
-    // 💡 FOLDER SESI DI-RESET TOTAL KE NAMA BARU
-    const SESSION_DIR = 'sesi_bersih_total';
+    const SESSION_DIR = 'sesi_qr_web';
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     const { version } = await fetchLatestBaileysVersion();
 
@@ -55,40 +92,38 @@ async function startBot() {
         generateHighQualityLinkPreview: false
     });
 
-    if (!sock.authState.creds.registered) {
-        // 💡 Jeda diperlama jadi 10 detik biar koneksi socket benar-benar stabil dulu sebelum minta kode
-        setTimeout(async () => {
-            try {
-                let code = await sock.requestPairingCode(NOMOR_BOT);
-                code = code?.match(/.{1,4}/g)?.join("-") || code;
-                console.log('\n==================================================');
-                console.log(`🔥 KODE PAIRING LU BRE: ${code}`);
-                console.log('📝 SEGERA MASUKKAN KE HP SEBELUM KADALUARSA!');
-                console.log('==================================================\n');
-            } catch (err) {
-                console.log('\n❌ GAGAL MINTA KODE PAIRING:', err.message);
-            }
-        }, 10000); 
-    }
-
     sock.ev.on('creds.update', async () => { try { await saveCreds(); } catch (e) {} });
 
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect } = update;
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+        
+        if (qr) {
+            // Ubah string QR mentah jadi format gambar Data URL (Base64) yang besar
+            try {
+                latestQR = await qrcode.toDataURL(qr);
+                console.log('\n==================================================');
+                console.log('📌 QR CODE SIAP! Buka URL Railway lu di browser buat scan.');
+                console.log('==================================================\n');
+            } catch (err) {
+                console.error('Gagal generate QR web:', err);
+            }
+        }
+
         if (connection === 'close') {
+            latestQR = '';
             const statusCode = (lastDisconnect?.error)?.output?.statusCode;
             console.log(`⚠️ Koneksi terputus. Kode status: ${statusCode}. Menyambungkan ulang...`);
             
-            // Jika kena 401 / 403 / LoggedOut, hapus folder sesi otomatis
             if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403) {
                 console.log('🔄 Sesi ditolak WA! Membersihkan folder sesi...');
                 try { if (fs.existsSync(SESSION_DIR)) fs.rmSync(SESSION_DIR, { recursive: true, force: true }); } catch (e) {}
-                setTimeout(startBot, 3000);
+                setTimeout(startBot, 2000);
             } else {
                 setTimeout(startBot, 3000);
             }
         } else if (connection === 'open') {
-            console.log('🎉 BOT BERHASIL TERTAUT DAN AMAN DI SERVER!');
+            latestQR = '';
+            console.log('🎉 BOT BERHASIL TERTAUT DAN AMAN DI SERVER RAILWAY 24/7!');
         }
     });
 
@@ -124,7 +159,7 @@ async function startBot() {
             if (isAdmin) {
                 menuText += `*👑 PANEL KHUSUS ADMIN:*\n` +
                             `➤ *!ceksaldo*\n` +
-                            `➤ *!proses <kode_layanan> <id>*\n`;
+                            `➤ *!proses <kode_layanan> <id>* (Tembak Manual)\n`;
             }
             await sock.sendMessage(senderJid, { text: menuText }, { quoted: msg });
             return;
