@@ -1,21 +1,19 @@
-# Pake Node.js versi 20 yang paling stabil dan anti-crash buat Baileys
-FROM node:20-slim
+# Pake versi Node 20 FULL (tanpa embel-embel slim) biar mesinnya kebal
+FROM node:20
+
 WORKDIR /app
-ENV NODE_ENV="production"
 
-# Install alat tempur wajib biar modul nggak gagal compile
-RUN apt-get update -qq && \
-    apt-get install --no-install-recommends -y build-essential node-gyp pkg-config python-is-python3 git && \
-    rm -rf /var/lib/apt/lists/*
-
+# Copy package.json doang buat diinstall
 COPY package.json ./
 
-# Jalankan npm install dengan mode hemat memori dan lewati peringatan gak penting
-RUN npm install --no-audit --no-fund --legacy-peer-deps
+# Bersihkan cache lama biar gak ada sampah nyangkut, lalu install
+RUN npm cache clean --force && npm install --no-audit --no-fund
 
+# Copy sisa file bot lu (index.js, dll)
 COPY . .
 
+# Eksekusi port
 EXPOSE 3000
 
-# Perintah eksekusi utama
-CMD [ "node", "index.js" ]
+# Nyalakan mesinnya
+CMD ["node", "index.js"]
