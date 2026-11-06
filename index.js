@@ -79,6 +79,8 @@ async function startBot() {
         if (!msg || !msg.message) return;
 
         const senderJid = msg.key.remoteJid;
+        
+        // 🚨 LARANGAN KERAS: JANGAN PERNAH BALAS CHAT DARI GRUP!
         if (!senderJid || senderJid.endsWith('@g.us') || senderJid === 'status@broadcast') return;
 
         const senderNumber = senderJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
@@ -109,7 +111,7 @@ async function startBot() {
         if (textLower === '!format') {
             await sock.sendMessage(senderJid, { text: `*🛒 FORMAT ORDER*\nGame:\nID Player:\nNominal Order:\n\n_Kirim bukti transfer ke sini._` }, { quoted: msg }); return;
         }
-        if (textLower === '!admin') {
+        if (textLower === !admin) {
             await sock.sendMessage(senderJid, { text: `📞 *Kontak Owner:* Muhamad Sodikin` }, { quoted: msg }); return;
         }
 
@@ -120,7 +122,7 @@ async function startBot() {
                 return;
             }
             isAiActive = true;
-            await sock.sendMessage(senderJid, { text: '🤖 *Mode AI Aktif!* Bot Qinz siap membalas otomatis.' }, { quoted: msg });
+            await sock.sendMessage(senderJid, { text: '🤖 *Mode AI Aktif!* Siap layani pembeli.' }, { quoted: msg });
             return;
         }
         
@@ -131,14 +133,22 @@ async function startBot() {
             return;
         }
 
-        // 3. API VIP RESELLER
+        // 3. API VIP RESELLER (FIXED CONNECTION)
         if (textLower === '!ceksaldo') {
             if (!isAdmin) return;
+            await sock.sendMessage(senderJid, { text: '⏳ Cek saldo VIP...' }, { quoted: msg });
             try {
-                const payload = new URLSearchParams({ key: VIP_API_KEY, sign: VIP_SIGN });
-                const res = await axios.post('https://vipreseller.co.id/api/profile', payload);
+                const payload = new URLSearchParams({
+                    key: VIP_API_KEY,
+                    sign: VIP_SIGN
+                });
+                const res = await axios.post('https://vipreseller.co.id/api/profile', payload, {
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+                });
                 await sock.sendMessage(senderJid, { text: `📊 *Hasil Cek Saldo:*\n\n${JSON.stringify(res.data, null, 2)}` }, { quoted: msg });
-            } catch (e) { await sock.sendMessage(senderJid, { text: `❌ Gagal konek ke API VIP Reseller.` }, { quoted: msg }); }
+            } catch (e) {
+                await sock.sendMessage(senderJid, { text: `❌ Gagal konek VIP: ${e.message}` }, { quoted: msg });
+            }
             return;
         }
         
@@ -146,18 +156,35 @@ async function startBot() {
             if (!isAdmin) return;
             const parts = messageContent.split(' ').filter(Boolean);
             if (parts.length < 3) return;
+            await sock.sendMessage(senderJid, { text: `⏳ Proses order *${parts[1]}*...` }, { quoted: msg });
             try {
-                const payload = new URLSearchParams({ key: VIP_API_KEY, sign: VIP_SIGN, type: 'order', service: parts[1], data_no: parts[2] });
-                const res = await axios.post('https://vipreseller.co.id/api/game-feature', payload);
+                const payload = new URLSearchParams({
+                    key: VIP_API_KEY,
+                    sign: VIP_SIGN,
+                    type: 'order',
+                    service: parts[1],
+                    data_no: parts[2]
+                });
+                const res = await axios.post('https://vipreseller.co.id/api/game-feature', payload, {
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+                });
                 await sock.sendMessage(senderJid, { text: `📋 *Respon API:*\n${JSON.stringify(res.data, null, 2)}` }, { quoted: msg });
-            } catch (e) { await sock.sendMessage(senderJid, { text: `❌ Gagal eksekusi transaksi.` }, { quoted: msg }); }
+            } catch (e) {
+                await sock.sendMessage(senderJid, { text: `❌ Gagal eksekusi: ${e.message}` }, { quoted: msg });
+            }
             return;
         }
 
-        // 4. RESPON AI GROQ (Menggunakan model Qwen terbaru)
+        // 4. RESPON AI CUSTOM (PINTAR, TELITI BUKTI TF, SUPER PENDEK, GAYA LU)
         if (isAiActive && !messageContent.startsWith('!')) {
             try {
-                let groqMessages = [{ role: "system", content: "Lu adalah asisten admin Lapak Siqinz bernama Bot Qinz. Jawab pake bahasa santai ala anak tongkrongan (bre, lu, gua). Tugas lu melayani top up game dan ngecek screenshot transfer." }];
+                let systemPrompt = `Lu adalah Muhamad Sodikin (pemilik Lapak Siqinz). Sifat lu: santai, ramah, kadang lucu, emosian dikit kalau ada yang macem-macem, sopan ke pembeli asli. 
+ATURAN UTAMA:
+1. JANGAN PANJANG! Balas wajib singkat, padat, to the point, cukup 5 sampai 10 kata saja!
+2. KHUSUS MELAYANI PEMBELI / TOP UP / CEK BUKTI TRANSFER. Kalau ada yang chat di luar konteks jual-beli atau iseng, tolak atau cuekin singkat.
+3. JIKA ADA GAMBAR BUKTI TRANSFER: Lu harus teliti selayaknya manusia jenius! Cek jam, tanggal, detik, nama pengirim, dan pastikan NOMOR REKENING TUJUAN HARUS KE NOMOR: 083142628969 ATAS NAMA MUHAMAD SODIKIN. Kalau salah nomor rekening, kurang nominal, atau editan/palsu, bilang itu palsu/ditolak dengan tegas! Kalau asli, validasi dengan ramah.`;
+
+                let groqMessages = [{ role: "system", content: systemPrompt }];
 
                 if (isImage) {
                     const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
@@ -165,7 +192,7 @@ async function startBot() {
                     groqMessages.push({
                         role: "user",
                         content: [
-                            { type: "text", text: messageContent || "Tolong cek bukti screenshot ini bre." },
+                            { type: "text", text: messageContent || "Cek bukti transfer ini bre, pastikan mutlak ke no rek 083142628969 a.n Muhamad Sodikin." },
                             { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
                         ]
                     });
@@ -175,15 +202,19 @@ async function startBot() {
 
                 const chatCompletion = await groq.chat.completions.create({
                     messages: groqMessages, 
-                    model: "qwen/qwen3.8-27b", // Model Qwen aktif di Groq
+                    model: "qwen/qwen3.8-27b", 
                     temperature: 0.7,
                 });
                 
-                const responseText = chatCompletion.choices[0]?.message?.content || '';
-                if (responseText) await sock.sendMessage(senderJid, { text: responseText }, { quoted: msg });
+                let responseText = chatCompletion.choices[0]?.message?.content || '';
+                
+                // Paksa potong teks jika AI kepanjangan (opsional pengaman tambahan)
+                if (responseText) {
+                    await sock.sendMessage(senderJid, { text: responseText }, { quoted: msg });
+                }
             } catch (err) {
                 console.error('❌ Groq Error:', err?.message || err);
-                await sock.sendMessage(senderJid, { text: 'Waduh bre, AI-nya lagi puyeng bentar. Coba ulang.' }, { quoted: msg });
+                await sock.sendMessage(senderJid, { text: 'Waduh puyeng, kirim ulang bre!' }, { quoted: msg });
             }
         }
     });
