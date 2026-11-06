@@ -80,7 +80,7 @@ async function startBot() {
 
         const senderJid = msg.key.remoteJid;
         
-        // 🚨 LARANGAN KERAS: JANGAN PERNAH BALAS CHAT DARI GRUP!
+        // 🚨 JANGAN PERNAH BALAS CHAT DARI GRUP!
         if (!senderJid || senderJid.endsWith('@g.us') || senderJid === 'status@broadcast') return;
 
         const senderNumber = senderJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
@@ -111,7 +111,8 @@ async function startBot() {
         if (textLower === '!format') {
             await sock.sendMessage(senderJid, { text: `*🛒 FORMAT ORDER*\nGame:\nID Player:\nNominal Order:\n\n_Kirim bukti transfer ke sini._` }, { quoted: msg }); return;
         }
-        if (textLower === !admin) {
+        // FIXED: Diperbaiki dari !admin menjadi isAdmin / pemanggilan teks biasa
+        if (textLower === '!admin') {
             await sock.sendMessage(senderJid, { text: `📞 *Kontak Owner:* Muhamad Sodikin` }, { quoted: msg }); return;
         }
 
@@ -208,7 +209,6 @@ ATURAN UTAMA:
                 
                 let responseText = chatCompletion.choices[0]?.message?.content || '';
                 
-                // Paksa potong teks jika AI kepanjangan (opsional pengaman tambahan)
                 if (responseText) {
                     await sock.sendMessage(senderJid, { text: responseText }, { quoted: msg });
                 }
