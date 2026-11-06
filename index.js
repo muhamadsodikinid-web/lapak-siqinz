@@ -6,9 +6,8 @@ process.on('unhandledRejection', (err) => console.error('🚨 [ABAIKAN] Error ri
 
 const express = require('express');
 const app = express();
-const PORT = process.env.PORT || 8080; // 💡 Port disesuaikan dengan standar Railway biar gak di-kill
+const PORT = process.env.PORT || 8080;
 
-// 💡 Pancingan biar Railway ngerasa servernya sehat & gak di-restart paksa
 app.get('/', (req, res) => res.status(200).send('Bot Lapak Siqinz Railway 24/7 Active!'));
 app.get('/health', (req, res) => res.status(200).json({ status: 'UP' }));
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server HTTP Express standby di port ${PORT}`));
@@ -24,9 +23,9 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const VIP_API_ID = process.env.VIP_API_ID;
 const VIP_API_KEY = process.env.VIP_API_KEY;
 
-// 👑 PENGATURAN NOMOR EKSPLISIT
-const NOMOR_BOT = '6283878322624';          // Nomor WhatsApp Bot
-const NOMOR_ADMIN = '6283142628969';        // Nomor Khusus Admin
+const NOMOR_BOT = '6283878322624';          
+const NOMOR_ADMIN = '6283142628969';        
+const BIAYA_ADMIN = 3000;                   // 💰 Cuan admin per transaksi
 
 function getVipSign() {
     if (process.env.VIP_SIGN) return process.env.VIP_SIGN;
@@ -37,21 +36,20 @@ const chatHistories = {};
 const msgRetryCounterCache = new NodeCache();
 
 async function startBot() {
-    // 💡 Folder sesi diganti baru lagi biar 100% fresh!
     const { state, saveCreds } = await useMultiFileAuthState('sesi_final_lapak');
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
         version,
-        logger: pino({ level: 'silent' }), // Matikan log bawaan yang bikin RAM berat
+        logger: pino({ level: 'silent' }),
         auth: state,
         printQRInTerminal: false,
-        browser: ['Ubuntu', 'Chrome', '20.0.04'], // 💡 Identitas super stabil buat Pairing
+        browser: ['Ubuntu', 'Chrome', '20.0.04'], 
         msgRetryCounterCache,
         connectTimeoutMs: 60000,      
         defaultQueryTimeoutMs: 60000, 
         keepAliveIntervalMs: 10000,   
-        syncFullHistory: false,       // 💡 Jangan sinkron chat lama biar gak berat!
+        syncFullHistory: false,       
         generateHighQualityLinkPreview: false
     });
 
@@ -67,7 +65,7 @@ async function startBot() {
             } catch (err) {
                 console.log('\n❌ GAGAL MINTA KODE PAIRING:', err.message);
             }
-        }, 8000); // 💡 Dikasih jeda 8 detik biar server napas dulu sebelum minta kode
+        }, 8000); 
     }
 
     sock.ev.on('creds.update', async () => { try { await saveCreds(); } catch (e) {} });
@@ -77,9 +75,7 @@ async function startBot() {
         if (connection === 'close') {
             const statusCode = (lastDisconnect?.error)?.output?.statusCode;
             console.log(`⚠️ Koneksi terputus. Kode status: ${statusCode}. Menyambungkan ulang...`);
-            
             if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403) {
-                console.log('🔄 Sesi ditolak WA! Menghapus file sesi...');
                 try { if (fs.existsSync('sesi_final_lapak')) fs.rmSync('sesi_final_lapak', { recursive: true, force: true }); } catch (e) {}
                 setTimeout(startBot, 2000);
             } else {
@@ -118,29 +114,55 @@ async function startBot() {
         // 1. MENU UTAMA
         if (textLower === 'menu' || textLower === '!menu') {
             let menuText = `*🎮 SELAMAT DATANG DI LAPAK SIQINZ 🎮*\n_Pusat Top Up Game Termurah & Terpercaya_\n\n` +
-                           `*📋 MENU PELANGGAN:*\n➤ *!game* (Daftar Game)\n➤ *!format* (Cara Order)\n➤ *!admin* (Hubungi Owner)\n\n`;
+                           `*📋 MENU PELANGGAN:*\n` +
+                           `➤ *!price* (Cek Harga Resmi + Admin Rp 3.000)\n` +
+                           `➤ *!format* (Cara Order)\n` +
+                           `➤ *!admin* (Hubungi Owner)\n\n`;
             
             if (isAdmin) {
                 menuText += `*👑 PANEL KHUSUS ADMIN:*\n` +
-                            `Status AI: 🟢 ALWAYS ON (Otomatis)\n` +
                             `➤ *!ceksaldo*\n` +
-                            `➤ *!proses <kode> <id>*\n`;
+                            `➤ *!proses <kode_layanan> <id>* (Tembak Manual)\n`;
             }
             await sock.sendMessage(senderJid, { text: menuText }, { quoted: msg });
             return;
         }
 
-        if (textLower === '!game') {
-            await sock.sendMessage(senderJid, { text: `*🎮 DAFTAR GAME*\n1. *Mobile Legends (ML)*\n2. *Free Fire (FF)*\nKetik *!format* untuk lanjut order.` }, { quoted: msg }); return;
+        // 2. FITUR CEK HARGA (VIP + BIAYA ADMIN 3.000) - Dibatasi 10 item biar ringan
+        if (textLower === '!price' || textLower === '!list' || textLower === '!layanan') {
+            await sock.sendMessage(senderJid, { text: '⏳ Mengambil daftar harga resmi dari server VIP Reseller...' }, { quoted: msg });
+            try {
+                const finalSign = getVipSign();
+                const payload = new URLSearchParams({ key: VIP_API_KEY, sign: finalSign, type: 'services' });
+                const res = await axios.post('https://vip-reseller.co.id/api/game-feature', payload, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+                
+                if (res.data && res.data.result && res.data.data) {
+                    let services = res.data.data.slice(0, 10); // Cukup 10 item teratas
+                    let textList = `*🔥 DAFTAR HARGA LAPAK SIQINZ 🔥*\n_(Sudah termasuk biaya admin Rp 3.000)_\n\n`;
+                    
+                    services.forEach((s, index) => {
+                        let hargaJual = parseInt(s.price) + BIAYA_ADMIN;
+                        textList += `${index + 1}. *${s.name}*\n   Kode: \`${s.code}\`\n   Harga: *Rp ${hargaJual.toLocaleString('id-ID')}* | Status: ${s.status}\n\n`;
+                    });
+                    textList += `_Kirim bukti transfer ke rekening: 083142628969 (a.n Muhamad Sodikin)_`;
+                    await sock.sendMessage(senderJid, { text: textList }, { quoted: msg });
+                } else {
+                    await sock.sendMessage(senderJid, { text: '❌ Gagal memuat daftar harga dari server.' }, { quoted: msg });
+                }
+            } catch (e) {
+                await sock.sendMessage(senderJid, { text: `❌ Terjadi kesalahan koneksi API: ${e.message}` }, { quoted: msg });
+            }
+            return;
         }
+
         if (textLower === '!format') {
-            await sock.sendMessage(senderJid, { text: `*🛒 FORMAT ORDER*\nGame:\nID Player & Server:\nNominal Order:\n\n_Kirim bukti transfer ke rekening: 083142628969 (a.n Muhamad Sodikin)_` }, { quoted: msg }); return;
+            await sock.sendMessage(senderJid, { text: `*🛒 FORMAT ORDER*\nKode Layanan:\nID Player & Server:\n\n_Pastikan transfer sesuai harga + admin Rp 3.000_\n_Kirim bukti ke rek: 083142628969 (a.n Muhamad Sodikin)_` }, { quoted: msg }); return;
         }
         if (textLower === '!admin') {
             await sock.sendMessage(senderJid, { text: `📞 *Kontak Owner:* Muhamad Sodikin` }, { quoted: msg }); return;
         }
 
-        // 2. API VIP RESELLER MANUAL (ADMIN ONLY)
+        // 3. API VIP RESELLER MANUAL (ADMIN ONLY)
         if (textLower === '!ceksaldo') {
             if (!isAdmin) return;
             await sock.sendMessage(senderJid, { text: '⏳ Mengecek saldo ke VIP Reseller...' }, { quoted: msg });
@@ -171,18 +193,17 @@ async function startBot() {
             return;
         }
 
-        // 3. PROSES AI (SELALU AKTIF & OTOMATIS)
+        // 4. PROSES AI DENGAN BATASAN TOKEN AMAN (MAX_TOKENS: 250)
         if (!messageContent.startsWith('!')) {
             try {
                 if (!chatHistories[senderJid]) chatHistories[senderJid] = [];
 
-                const systemPrompt = `Lu adalah Muhamad Sodikin, pemilik "Lapak Siqinz". Lu punya 2 mode yang jalan otomatis:
-1. JIKA ORANG CUMA NGOBROL BIASA: Lu balas santai, ramah, lucu, adaptif bahasa (kalo dia Sunda, balas Sunda; kalo Indo, balas Indo). Balasan WAJIB SINGKAT 5-10 kata aja.
-2. JIKA ORANG KIRIM GAMBAR/STRUK/FORMAT ORDER: Lu langsung berubah jadi Admin Top-Up Profesional. Analisis teliti bukti transfernya: PASTIKAN rekening tujuan HARUS KE 083142628969 atas nama MUHAMAD SODIKIN.
-   - Kalau bukti VALID/ASLI, balas ramah dan lu WAJIB kasih format ini di akhir pesan: [AUTO_ORDER:KODE_LAYANAN|ID_TUJUAN] (Contoh: [AUTO_ORDER:ml5|1234567(1234)]).
-   - Kalau palsu/kurang, tolak tegas tanpa format AUTO_ORDER.
-3. INGAT RIWAYAT: Selalu ingat chat sebelumnya dengan user ini.
-4. JANGAN PERNAH CHAT KE GRUP.`;
+                const systemPrompt = `Lu adalah Muhamad Sodikin, pemilik "Lapak Siqinz". 
+ATURAN UTAMA:
+1. JIKA ORANG NGOBROL BIASA: Balas santai, ramah, adaptif bahasa (Sunda/Indo), super singkat 5-10 kata.
+2. JIKA ORANG KIRIM BUKTI TF & FORMAT ORDER: Cek teliti struknya, pastikan rekening tujuan HARUS KE 083142628969 a.n MUHAMAD SODIKIN. Perhatikan nominal mencakup harga dasar layanan + biaya admin Rp 3.000.
+3. KETIKA ORDER OTOMATIS: Berikan format [AUTO_ORDER:KODE_LAYANAN|ID_TUJUAN] di akhir pesan.
+4. JANGAN CHAT KE GRUP.`;
 
                 let groqMessages = [{ role: "system", content: systemPrompt }, ...chatHistories[senderJid]];
 
@@ -200,10 +221,12 @@ async function startBot() {
                     groqMessages.push({ role: "user", content: messageContent });
                 }
 
+                // 💡 DIPASANG MAX_TOKENS BIAR NGGAK KENA LIMIT OLEH GROQ
                 const chatCompletion = await groq.chat.completions.create({
                     messages: groqMessages, 
                     model: "qwen/qwen3.8-27b", 
                     temperature: 0.7,
+                    max_tokens: 250 
                 });
                 
                 let responseText = chatCompletion.choices[0]?.message?.content || '';
@@ -214,7 +237,7 @@ async function startBot() {
                         const serviceCode = autoOrderMatch[1].trim();
                         const targetDataNo = autoOrderMatch[2].trim();
                         let cleanResponse = responseText.replace(/\[AUTO_ORDER:.*?\]/g, '').trim();
-                        cleanResponse += `\n\n✅ *Bukti TF Valid! Sistem otomatis menembak pesanan ke VIP Reseller...*`;
+                        cleanResponse += `\n\n✅ *Bukti TF Valid (Termasuk Admin Rp 3.000)! Sistem otomatis menembak pesanan ke VIP Reseller...*`;
                         await sock.sendMessage(senderJid, { text: cleanResponse }, { quoted: msg });
 
                         try {
@@ -231,7 +254,7 @@ async function startBot() {
 
                     chatHistories[senderJid].push({ role: "user", content: messageContent });
                     chatHistories[senderJid].push({ role: "assistant", content: responseText });
-                    if (chatHistories[senderJid].length > 10) chatHistories[senderJid].splice(0, 2);
+                    if (chatHistories[senderJid].length > 6) chatHistories[senderJid].splice(0, 2); // Riwayat dipangkas biar makin ringan
                 }
             } catch (err) {
                 console.error('❌ Groq Error:', err?.message || err);
