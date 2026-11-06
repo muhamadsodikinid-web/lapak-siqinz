@@ -3,105 +3,49 @@ require('dotenv').config();
 process.on('uncaughtException', (err) => console.error('🚨 UNCAUGHT EXCEPTION:', err?.message || err));
 process.on('unhandledRejection', (err) => console.error('🚨 UNHANDLED REJECTION:', err?.message || err));
 
-// Tambahan ServerApiVersion biar gak kena blokir SSL 80 sama MongoDB
-const { MongoClient, ServerApiVersion } = require('mongodb');
-const { default: makeWASocket, initAuthCreds, BufferJSON, proto, DisconnectReason, fetchLatestBaileysVersion, Browsers, downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, downloadMediaMessage, BufferJSON } = require('@whiskeysockets/baileys');
 const Groq = require('groq-sdk');
 const express = require('express');
 const axios = require('axios');
 const pino = require('pino');
+const fs = require('fs');
 const NodeCache = require('node-cache');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-app.get('/', (req, res) => res.send('Server Lapak Siqinz (MongoDB Super Edition) Aktif!'));
+app.get('/', (req, res) => res.send('Server Lapak Siqinz (String Session) Aktif!'));
 app.listen(PORT, () => console.log(`🚀 Server jalan di port ${PORT}`));
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const VIP_API_KEY = process.env.VIP_API_KEY;
 const VIP_SIGN = process.env.VIP_SIGN;
-
-// GANTI PAKE NOMOR LU YANG DIPAKE BUAT BOT (Tanpa +, Tanpa Spasi)
 const NOMOR_BOT = '6283878322624'; 
 
 let isAiActive = false;
 const msgRetryCounterCache = new NodeCache();
 
-// ==========================================
-// ADAPTOR PENYIMPANAN SESI KE MONGODB
-// ==========================================
-async function useMongoDBAuthState(collection) {
-    const readData = async (id) => {
-        try {
-            const data = await collection.findOne({ _id: id });
-            return data ? JSON.parse(JSON.stringify(data.data), BufferJSON.reviver) : null;
-        } catch (error) { return null; }
-    };
-    const writeData = async (data, id) => {
-        const value = JSON.parse(JSON.stringify(data, BufferJSON.replacer));
-        await collection.replaceOne({ _id: id }, { _id: id, data: value }, { upsert: true });
-    };
-    const removeData = async (id) => {
-        await collection.deleteOne({ _id: id });
-    };
-
-    let creds = await readData('creds');
-    if (!creds) {
-        creds = initAuthCreds();
-        await writeData(creds, 'creds');
+// Fungsi pintar buat load String Session dari Environment/Secrets Fly.io
+function restoreSessionFromString() {
+    if (!process.env.SESSION_STRING) return false;
+    try {
+        if (!fs.existsSync('auth_session')) fs.mkdirSync('auth_session', { recursive: true });
+        const parsedFiles = JSON.parse(process.env.SESSION_STRING);
+        for (const filename in parsedFiles) {
+            fs.writeFileSync(`auth_session/${filename}`, JSON.stringify(parsedFiles[filename]));
+        }
+        console.log('✅ Berhasil memulihkan sesi dari Secrets Fly.io!');
+        return true;
+    } catch (e) {
+        console.error('❌ Gagal memulihkan string session:', e);
+        return false;
     }
-
-    return {
-        state: {
-            creds,
-            keys: {
-                get: async (type, ids) => {
-                    const data = {};
-                    await Promise.all(ids.map(async id => {
-                        let value = await readData(`${type}-${id}`);
-                        if (type === 'app-state-sync-key' && value) {
-                            value = proto.Message.AppStateSyncKeyData.fromObject(value);
-                        }
-                        data[id] = value;
-                    }));
-                    return data;
-                },
-                set: async (data) => {
-                    const tasks = [];
-                    for (const category in data) {
-                        for (const id in data[category]) {
-                            const value = data[category][id];
-                            const key = `${category}-${id}`;
-                            tasks.push(value ? writeData(value, key) : removeData(key));
-                        }
-                    }
-                    await Promise.all(tasks);
-                }
-            }
-        },
-        saveCreds: () => writeData(creds, 'creds')
-    };
 }
 
 async function startBot() {
-    console.log('⏳ Konek ke MongoDB Atlas...');
-    
-    // Konfigurasi MongoClient yang udah di-upgrade anti SSL error
-    const mongoClient = new MongoClient(process.env.MONGODB_URI, {
-        serverApi: {
-            version: ServerApiVersion.v1,
-            strict: true,
-            deprecationErrors: true,
-        }
-    });
-    
-    await mongoClient.connect();
-    console.log('✅ Berhasil nyambung ke Database MongoDB!');
-    
-    const db = mongoClient.db('whatsapp_api');
-    const authCollection = db.collection('auth_session_baileys');
-    
-    const { state, saveCreds } = await useMongoDBAuthState(authCollection);
+    // Panggil pemulihan sesi sebelum bot dinyalain
+    restoreSessionFromString();
+
+    const { state, saveCreds } = await useMultiFileAuthState('auth_session');
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
@@ -128,21 +72,42 @@ async function startBot() {
         }, 8000);
     }
 
-    sock.ev.on('creds.update', async () => { try { await saveCreds(); } catch (e) {} });
+    sock.ev.on('creds.update', async () => { 
+        try { 
+            await saveCreds(); 
+        } catch (e) {} 
+    });
 
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
             const statusCode = (lastDisconnect?.error)?.output?.statusCode;
             if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403) {
-                console.log('🚨 Sesi ditolak WA! Mereset database login...');
-                authCollection.drop().catch(() => {}); // Hapus sesi lama di MongoDB
+                console.log('🚨 Sesi ditolak WA! Menghapus sesi lokal...');
+                try { if (fs.existsSync('auth_session')) fs.rmSync('auth_session', { recursive: true, force: true }); } catch (e) {}
                 setTimeout(startBot, 2000);
             } else {
                 setTimeout(startBot, 3000);
             }
         } else if (connection === 'open') {
-            console.log('🎉 BOT BERHASIL TERTAUT (SESI AMAN DI MONGODB)!');
+            console.log('🎉 BOT BERHASIL TERTAUT DI WHATSAPP!');
+            
+            // KODE SAKTI: Cetak seluruh isi folder auth_session jadi string teks mentah di Logs!
+            setTimeout(() => {
+                try {
+                    const files = fs.readdirSync('auth_session');
+                    const sessionData = {};
+                    for (const file of files) {
+                        const content = fs.readFileSync(`auth_session/${file}`, 'utf-8');
+                        sessionData[file] = JSON.parse(content);
+                    }
+                    console.log('\n================== COPY KODE DI BAWAH INI ==================');
+                    console.log(JSON.stringify(sessionData));
+                    console.log('============================================================\n');
+                } catch (e) {
+                    console.error('Gagal export session string:', e);
+                }
+            }, 5000);
         }
     });
 
@@ -151,10 +116,7 @@ async function startBot() {
         const msg = messages[0];
         if (!msg || !msg.message) return;
 
-        // Cek apakah pesan dikirim dari diri sendiri
         const isFromMe = msg.key.fromMe;
-        
-        // ANTI-LOOPING: Abaikan pesan sistem buatan bot
         if (isFromMe && (msg.key.id.startsWith('BAE5') || msg.key.id.length === 16 || msg.key.id.length === 32)) return;
 
         const senderJid = msg.key.remoteJid;
@@ -169,13 +131,10 @@ async function startBot() {
         const isImage = msg.message.imageMessage ? true : false;
         const textLower = messageContent.toLowerCase();
 
-        // ==========================================
         // 1. MENU UTAMA
-        // ==========================================
         if (textLower === 'menu' || textLower === '!menu') {
             let menuText = `*🎮 SELAMAT DATANG DI LAPAK SIQINZ 🎮*\n_Pusat Top Up Game Termurah & Terpercaya_\n\n` +
                            `*📋 MENU PELANGGAN:*\n➤ *!game* (Daftar Game)\n➤ *!format* (Cara Order)\n➤ *!admin* (Hubungi Owner)\n\n`;
-            
             if (isAdmin) {
                 menuText += `*👑 PANEL KHUSUS OWNER:*\nStatus AI: ${isAiActive ? '✅ NYALA' : '❌ MATI'}\n` +
                             `➤ *!on-ai* (Nyalakan AI)\n➤ *!off-ai* (Matikan AI)\n➤ *!ceksaldo* (Cek VIP)\n➤ *!proses <kode> <id>* (Tembak Order)\n`;
@@ -184,9 +143,6 @@ async function startBot() {
             return;
         }
 
-        // ==========================================
-        // 2. SUB-MENU PELANGGAN
-        // ==========================================
         if (textLower === '!game') {
             await sock.sendMessage(senderJid, { text: `*🎮 DAFTAR GAME*\n1. *Mobile Legends (ML)*\n2. *Free Fire (FF)*\nKetik *!format* untuk lanjut order.` }, { quoted: msg }); return;
         }
@@ -197,13 +153,11 @@ async function startBot() {
             await sock.sendMessage(senderJid, { text: `📞 *Kontak Owner:* Muhamad Sodikin` }, { quoted: msg }); return;
         }
 
-        // ==========================================
-        // 3. SAKLAR AI (KHUSUS ADMIN)
-        // ==========================================
+        // 3. SAKLAR AI 
         if (textLower === '!on-ai') {
             if (!isAdmin) return;
             isAiActive = true;
-            await sock.sendMessage(senderJid, { text: '🤖 *Mode AI Aktif!* Bot Qinz siap membalas otomatis.' }, { quoted: msg }); return;
+            await sock.sendMessage(senderJid, { text: '🤖 *Mode AI Aktif!* Bot Qinz siap membalas.' }, { quoted: msg }); return;
         }
         if (textLower === '!off-ai') {
             if (!isAdmin) return;
@@ -211,12 +165,9 @@ async function startBot() {
             await sock.sendMessage(senderJid, { text: '💤 *Mode AI Dimatikan!*' }, { quoted: msg }); return;
         }
 
-        // ==========================================
-        // 4. API VIP RESELLER (KHUSUS ADMIN)
-        // ==========================================
+        // 4. API VIP RESELLER 
         if (textLower === '!ceksaldo') {
             if (!isAdmin) return;
-            await sock.sendMessage(senderJid, { text: '⏳ Bentar bre, ngecek brankas...' }, { quoted: msg });
             try {
                 const payload = new URLSearchParams({ key: VIP_API_KEY, sign: VIP_SIGN });
                 const res = await axios.post('https://vipreseller.co.id/api/profile', payload);
@@ -227,11 +178,7 @@ async function startBot() {
         if (textLower.startsWith('!proses')) {
             if (!isAdmin) return;
             const parts = messageContent.split(' ').filter(Boolean);
-            if (parts.length < 3) {
-                await sock.sendMessage(senderJid, { text: `⚠️ Format salah. Ketik: *!proses kode_game id_game*` }, { quoted: msg });
-                return;
-            }
-            await sock.sendMessage(senderJid, { text: `⏳ Memproses pesanan produk *${parts[1]}* untuk ID *${parts[2]}*...` }, { quoted: msg });
+            if (parts.length < 3) return;
             try {
                 const payload = new URLSearchParams({ key: VIP_API_KEY, sign: VIP_SIGN, type: 'order', service: parts[1], data_no: parts[2] });
                 const res = await axios.post('https://vipreseller.co.id/api/game-feature', payload);
@@ -240,12 +187,10 @@ async function startBot() {
             return;
         }
 
-        // ==========================================
         // 5. RESPON AI VISION GROQ
-        // ==========================================
         if (isAiActive && !messageContent.startsWith('!')) {
             try {
-                let groqMessages = [{ role: "system", content: "Lu adalah asisten admin Lapak Siqinz bernama Bot Qinz. Jawab pake bahasa santai ala anak tongkrongan (bre, lu, gua). Tugas lu melayani top up game dan ngecek screenshot transfer." }];
+                let groqMessages = [{ role: "system", content: "Lu adalah asisten admin Lapak Siqinz bernama Bot Qinz. Jawab pake bahasa santai ala anak tongkrongan. Tugas lu melayani top up game dan ngecek screenshot transfer." }];
 
                 if (isImage) {
                     const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
@@ -264,12 +209,10 @@ async function startBot() {
                 const chatCompletion = await groq.chat.completions.create({
                     messages: groqMessages, model: "llama-3.2-90b-vision-preview", temperature: 0.7,
                 });
-                
                 const responseText = chatCompletion.choices[0]?.message?.content || '';
                 if (responseText) await sock.sendMessage(senderJid, { text: responseText }, { quoted: msg });
             } catch (err) {
-                console.error('❌ Groq Error:', err?.message || err);
-                await sock.sendMessage(senderJid, { text: 'Waduh bre, AI-nya lagi puyeng bentar. Coba ulang.' }, { quoted: msg });
+                await sock.sendMessage(senderJid, { text: 'Waduh bre, AI-nya lagi loading berat. Coba ulang.' }, { quoted: msg });
             }
         }
     });
