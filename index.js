@@ -1,4 +1,5 @@
 require('dotenv').config();
+const crypto = require('crypto');
 
 process.on('uncaughtException', (err) => console.error('🚨 UNCAUGHT EXCEPTION:', err?.message || err));
 process.on('unhandledRejection', (err) => console.error('🚨 UNHANDLED REJECTION:', err?.message || err));
@@ -20,11 +21,19 @@ app.get('/health', (req, res) => res.status(200).json({ status: 'UP', uptime: pr
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server HTTP Express standby di port ${PORT}`));
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const VIP_API_ID = process.env.VIP_API_ID;
 const VIP_API_KEY = process.env.VIP_API_KEY;
-const VIP_SIGN = process.env.VIP_SIGN;
 const NOMOR_BOT = '6283878322624'; 
 
-let isAiActive = false;
+// 🛡️ VIP SIGN GENERATOR (Menggabungkan API_ID dan API_KEY sesuai standar VIP Reseller, atau pakai SIGN manual jika diset)
+function getVipSign() {
+    if (process.env.VIP_SIGN) {
+        return process.env.VIP_SIGN;
+    }
+    return crypto.createHash('md5').update(VIP_API_ID + VIP_API_KEY).digest('hex');
+}
+
+let aiMode = 'OFF'; 
 const msgRetryCounterCache = new NodeCache();
 
 async function startBot() {
@@ -98,8 +107,12 @@ async function startBot() {
                            `*📋 MENU PELANGGAN:*\n➤ *!game* (Daftar Game)\n➤ *!format* (Cara Order)\n➤ *!admin* (Hubungi Owner)\n\n`;
             
             if (isAdmin) {
-                menuText += `*👑 PANEL KHUSUS OWNER:*\nStatus AI: ${isAiActive ? '✅ NYALA' : '❌ MATI'}\n` +
-                            `➤ *!on-ai* (Nyalakan AI)\n➤ *!off-ai* (Matikan AI)\n➤ *!ceksaldo* (Cek VIP)\n➤ *!proses <kode> <id>* (Tembak Order)\n`;
+                menuText += `*👑 PANEL KHUSUS OWNER:*\nStatus AI: *${aiMode}* (OFF / TOPUP / CHAT)\n` +
+                            `➤ *!ai-topup* (AI Admin Top-Up - Long Text)\n` +
+                            `➤ *!ai-chat* (AI Pengganti Manusia - Short Text & Multi-Bahasa)\n` +
+                            `➤ *!ai-off* (Matikan AI)\n` +
+                            `➤ *!ceksaldo* (Cek Saldo VIP)\n` +
+                            `➤ *!proses <kode> <id>* (Tembak Order)\n`;
             }
             await sock.sendMessage(senderJid, { text: menuText }, { quoted: msg });
             return;
@@ -111,42 +124,46 @@ async function startBot() {
         if (textLower === '!format') {
             await sock.sendMessage(senderJid, { text: `*🛒 FORMAT ORDER*\nGame:\nID Player:\nNominal Order:\n\n_Kirim bukti transfer ke sini._` }, { quoted: msg }); return;
         }
-        // FIXED: Diperbaiki dari !admin menjadi isAdmin / pemanggilan teks biasa
         if (textLower === '!admin') {
             await sock.sendMessage(senderJid, { text: `📞 *Kontak Owner:* Muhamad Sodikin` }, { quoted: msg }); return;
         }
 
-        // 2. SAKLAR AI
-        if (textLower === '!on-ai') {
-            if (!isAdmin) {
-                await sock.sendMessage(senderJid, { text: '⚠️ Lu bukan admin, bre!' }, { quoted: msg });
-                return;
-            }
-            isAiActive = true;
-            await sock.sendMessage(senderJid, { text: '🤖 *Mode AI Aktif!* Siap layani pembeli.' }, { quoted: msg });
-            return;
-        }
-        
-        if (textLower === '!off-ai') {
-            if (!isAdmin) return;
-            isAiActive = false;
-            await sock.sendMessage(senderJid, { text: '💤 *Mode AI Dimatikan!*' }, { quoted: msg });
+        // 2. SAKLAR MODE AI
+        if (textLower === '!ai-topup') {
+            if (!isAdmin) { await sock.sendMessage(senderJid, { text: '⚠️ Lu bukan admin, bre!' }, { quoted: msg }); return; }
+            aiMode = 'TOPUP';
+            await sock.sendMessage(senderJid, { text: '🤖 *AI Admin Top-Up Aktif!* Siap layani & cek bukti transfer secara detail (Long Text).' }, { quoted: msg });
             return;
         }
 
-        // 3. API VIP RESELLER (FIXED CONNECTION)
+        if (textLower === '!ai-chat') {
+            if (!isAdmin) { await sock.sendMessage(senderJid, { text: '⚠️ Lu bukan admin, bre!' }, { quoted: msg }); return; }
+            aiMode = 'CHAT';
+            await sock.sendMessage(senderJid, { text: '👥 *AI Pengganti Manusia Aktif!* Obrolan santai, adaptif bahasa (Sunda/Indo), super singkat (5-10 kata).' }, { quoted: msg });
+            return;
+        }
+        
+        if (textLower === '!ai-off') {
+            if (!isAdmin) return;
+            aiMode = 'OFF';
+            await sock.sendMessage(senderJid, { text: '💤 *Semua Mode AI Dimatikan!*' }, { quoted: msg });
+            return;
+        }
+
+        // 3. API VIP RESELLER (LENGKAP DENGAN API_ID, API_KEY, DAN SIGN)
         if (textLower === '!ceksaldo') {
             if (!isAdmin) return;
-            await sock.sendMessage(senderJid, { text: '⏳ Cek saldo VIP...' }, { quoted: msg });
+            await sock.sendMessage(senderJid, { text: '⏳ Mengecek saldo ke server VIP Reseller...' }, { quoted: msg });
             try {
+                const finalSign = getVipSign();
                 const payload = new URLSearchParams({
                     key: VIP_API_KEY,
-                    sign: VIP_SIGN
+                    sign: finalSign
                 });
-                const res = await axios.post('https://vipreseller.co.id/api/profile', payload, {
+                const res = await axios.post('https://vip-reseller.co.id/api/profile', payload, {
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
                 });
-                await sock.sendMessage(senderJid, { text: `📊 *Hasil Cek Saldo:*\n\n${JSON.stringify(res.data, null, 2)}` }, { quoted: msg });
+                await sock.sendMessage(senderJid, { text: `📊 *Hasil Cek Saldo VIP:*\n\n${JSON.stringify(res.data, null, 2)}` }, { quoted: msg });
             } catch (e) {
                 await sock.sendMessage(senderJid, { text: `❌ Gagal konek VIP: ${e.message}` }, { quoted: msg });
             }
@@ -157,33 +174,45 @@ async function startBot() {
             if (!isAdmin) return;
             const parts = messageContent.split(' ').filter(Boolean);
             if (parts.length < 3) return;
-            await sock.sendMessage(senderJid, { text: `⏳ Proses order *${parts[1]}*...` }, { quoted: msg });
+            await sock.sendMessage(senderJid, { text: `⏳ Memproses pesanan *${parts[1]}* ke VIP Reseller...` }, { quoted: msg });
             try {
+                const finalSign = getVipSign();
                 const payload = new URLSearchParams({
                     key: VIP_API_KEY,
-                    sign: VIP_SIGN,
+                    sign: finalSign,
                     type: 'order',
                     service: parts[1],
                     data_no: parts[2]
                 });
-                const res = await axios.post('https://vipreseller.co.id/api/game-feature', payload, {
+                const res = await axios.post('https://vip-reseller.co.id/api/game-feature', payload, {
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
                 });
-                await sock.sendMessage(senderJid, { text: `📋 *Respon API:*\n${JSON.stringify(res.data, null, 2)}` }, { quoted: msg });
+                await sock.sendMessage(senderJid, { text: `📋 *Respon API VIP:*\n${JSON.stringify(res.data, null, 2)}` }, { quoted: msg });
             } catch (e) {
-                await sock.sendMessage(senderJid, { text: `❌ Gagal eksekusi: ${e.message}` }, { quoted: msg });
+                await sock.sendMessage(senderJid, { text: `❌ Gagal eksekusi transaksi: ${e.message}` }, { quoted: msg });
             }
             return;
         }
 
-        // 4. RESPON AI CUSTOM (PINTAR, TELITI BUKTI TF, SUPER PENDEK, GAYA LU)
-        if (isAiActive && !messageContent.startsWith('!')) {
+        // 4. PROSES DUAL-MODE AI (TOPUP VS CHAT)
+        if (aiMode !== 'OFF' && !messageContent.startsWith('!')) {
             try {
-                let systemPrompt = `Lu adalah Muhamad Sodikin (pemilik Lapak Siqinz). Sifat lu: santai, ramah, kadang lucu, emosian dikit kalau ada yang macem-macem, sopan ke pembeli asli. 
+                let systemPrompt = '';
+
+                if (aiMode === 'TOPUP') {
+                    systemPrompt = `Lu adalah Admin Top-Up profesional untuk "Lapak Siqinz". 
+ATURAN:
+1. Boleh memberikan penjelasan detail (Long Text) agar pembeli paham.
+2. JANGAN PERNAH CHAT KE GRUP.
+3. KETIKA MENERIMA BUKTI TRANSFER / GAMBAR: Analisis secara teliti tanggal, jam, detik, nominal, dan pastikan NOMOR REKENING TUJUAN HARUS KE: 083142628969 atas nama MUHAMAD SODIKIN. Jika salah rekening, editan, atau palsu, tolak dengan tegas! Jika asli, berikan instruksi proses selanjutnya dengan ramah.`;
+                } else if (aiMode === 'CHAT') {
+                    systemPrompt = `Lu adalah Muhamad Sodikin (pribadi asli di luar urusan top-up). 
 ATURAN UTAMA:
-1. JANGAN PANJANG! Balas wajib singkat, padat, to the point, cukup 5 sampai 10 kata saja!
-2. KHUSUS MELAYANI PEMBELI / TOP UP / CEK BUKTI TRANSFER. Kalau ada yang chat di luar konteks jual-beli atau iseng, tolak atau cuekin singkat.
-3. JIKA ADA GAMBAR BUKTI TRANSFER: Lu harus teliti selayaknya manusia jenius! Cek jam, tanggal, detik, nama pengirim, dan pastikan NOMOR REKENING TUJUAN HARUS KE NOMOR: 083142628969 ATAS NAMA MUHAMAD SODIKIN. Kalau salah nomor rekening, kurang nominal, atau editan/palsu, bilang itu palsu/ditolak dengan tegas! Kalau asli, validasi dengan ramah.`;
+1. WAJIB ADAPTIF BAHASA: Sesuaikan bahasa lu dengan bahasa yang dipakai lawan bicara (Misal dia pakai bahasa Sunda, balas pakai bahasa Sunda yang natural; jika bahasa Indonesia, balas bahasa Indonesia santai).
+2. Sifat lu: ramah, santai, lucu, manusiawi, sopan.
+3. BALASAN WAJIB SUPER SINGKAT (SHORT TEXT): Cukup 5 sampai 10 kata saja!
+4. JANGAN PERNAH CHAT KE GRUP.`;
+                }
 
                 let groqMessages = [{ role: "system", content: systemPrompt }];
 
@@ -193,7 +222,7 @@ ATURAN UTAMA:
                     groqMessages.push({
                         role: "user",
                         content: [
-                            { type: "text", text: messageContent || "Cek bukti transfer ini bre, pastikan mutlak ke no rek 083142628969 a.n Muhamad Sodikin." },
+                            { type: "text", text: messageContent || "Tolong cek gambar ini bre." },
                             { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
                         ]
                     });
