@@ -17,7 +17,6 @@ const Groq = require('groq-sdk');
 const axios = require('axios');
 const pino = require('pino');
 const fs = require('fs');
-const qrcode = require('qrcode'); // 💡 Pakai modul qrcode standar buat di-render jadi teks kecil
 const NodeCache = require('node-cache');
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
@@ -37,7 +36,7 @@ const chatHistories = {};
 const msgRetryCounterCache = new NodeCache();
 
 async function startBot() {
-    const SESSION_DIR = 'sesi_qr_padat';
+    const SESSION_DIR = 'sesi_pairing_teks';
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     const { version } = await fetchLatestBaileysVersion();
 
@@ -45,7 +44,7 @@ async function startBot() {
         version,
         logger: pino({ level: 'silent' }),
         auth: state,
-        printQRInTerminal: false, // Kita cetak sendiri manual pake qrcode text di bawah
+        printQRInTerminal: false, // Matikan QR total
         browser: ['Ubuntu', 'Chrome', '20.0.04'], 
         msgRetryCounterCache,
         connectTimeoutMs: 60000,      
@@ -55,27 +54,28 @@ async function startBot() {
         generateHighQualityLinkPreview: false
     });
 
+    if (!sock.authState.creds.registered) {
+        setTimeout(async () => {
+            try {
+                console.log('\n⏳ Sedang meminta Kode Pairing dari WhatsApp...');
+                let code = await sock.requestPairingCode(NOMOR_BOT);
+                code = code?.match(/.{1,4}/g)?.join("-") || code;
+                
+                // 💡 CETAK BERSIH SEBAGAI TEKS BIASA DI LOG
+                console.log('\n==================================================');
+                console.log(` KODE PAIRING LU: ${code} `);
+                console.log(' (Salin kode di atas, buka WA -> Perangkat Tertaut -> Tautkan dengan nomor)');
+                console.log('==================================================\n');
+            } catch (err) {
+                console.log('\n❌ GAGAL MINTA KODE PAIRING:', err.message);
+            }
+        }, 10000); // Jeda 10 detik biar koneksi stabil dulu
+    }
+
     sock.ev.on('creds.update', async () => { try { await saveCreds(); } catch (e) {} });
 
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-        
-        if (qr) {
-            console.log('\n==================================================');
-            console.log('📌 SCAN QR CODE DI BAWAH INI (UKURAN KECIL & RAPI):');
-            console.log('==================================================\n');
-            
-            // 💡 Render QR jadi teks kecil yang pas dan gampang di-scan kamera HP
-            try {
-                const qrString = await qrcode.toString(qr, { type: 'terminal', small: true });
-                console.log(qrString);
-            } catch (e) {
-                console.log('Gagal render QR:', e.message);
-            }
-
-            console.log('\n==================================================\n');
-        }
-
+    sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect } = update;
         if (connection === 'close') {
             const statusCode = (lastDisconnect?.error)?.output?.statusCode;
             console.log(`⚠️ Koneksi terputus. Kode status: ${statusCode}. Menyambungkan ulang...`);
@@ -104,7 +104,7 @@ async function startBot() {
         const isFromMe = msg.key.fromMe;
         const isSelfChat = senderNumber === NOMOR_BOT || senderJid.includes(NOMOR_BOT);
 
-        if (isFromMe && !isSelfChat) return; // Anti-nimbrung mutlak
+        if (isFromMe && !isSelfChat) return; 
 
         const isAdmin = senderNumber === NOMOR_ADMIN || senderNumber === NOMOR_BOT || isSelfChat;
 
@@ -250,7 +250,7 @@ ATURAN UTAMA:
                         await sock.sendMessage(senderJid, { text: responseText }, { quoted: msg });
                     }
 
-    chatHistories[senderJid].push({ role: "user", content: messageContent });
+                    chatHistories[senderJid].push({ role: "user", content: messageContent });
                     chatHistories[senderJid].push({ role: "assistant", content: responseText });
                     if (chatHistories[senderJid].length > 6) chatHistories[senderJid].splice(0, 2);
                 }
