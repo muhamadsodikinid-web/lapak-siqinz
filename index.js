@@ -7,54 +7,17 @@ process.on('unhandledRejection', (err) => console.error('🚨 [ABAIKAN] Error ri
 const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 8080;
-const qrcode = require('qrcode'); // 💡 Buat nampilin QR dalam bentuk halaman web
 
-let latestQR = '';
-
-// 🌐 Halaman Web buat nampilin QR Code ukuran BESAR
-app.get('/', (req, res) => {
-    if (latestQR) {
-        res.send(`
-            <html>
-                <head>
-                    <title>QR Code Bot Lapak Siqinz</title>
-                    <meta http-equiv="refresh" content="5"> <!-- Auto-refresh tiap 5 detik -->
-                    <style>
-                        body { background: #0f172a; color: white; font-family: sans-serif; text-align: center; padding-top: 50px; }
-                        h2 { color: #38bdf8; }
-                        .container { background: #1e293b; display: inline-block; padding: 20px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
-                        p { color: #94a3b8; font-size: 14px; }
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <h2>🤖 SCAN QR BOT LAPAK SIQINZ</h2>
-                        <img src="${latestQR}" alt="QR Code WhatsApp" style="width: 300px; height: 300px; border-radius: 8px;" />
-                        <p>Halaman ini akan refresh otomatis.<br>Buka WA di HP -> Perangkat Tertaut -> Scan QR ini!</p>
-                    </div>
-                </body>
-            </html>
-        `);
-    } else {
-        res.send(`
-            <html>
-                <body style="background: #0f172a; color: white; font-family: sans-serif; text-align: center; padding-top: 100px;">
-                    <h2>🔄 Bot sedang menyiapkam QR Code atau sudah tersambung (Connected)...</h2>
-                    <p>Cek tab Logs Railway untuk melihat status koneksi bot.</p>
-                </body>
-            </html>
-        `);
-    }
-});
-
+app.get('/', (req, res) => res.status(200).send('Bot Lapak Siqinz Railway Active 24/7!'));
 app.get('/health', (req, res) => res.status(200).json({ status: 'UP' }));
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server Web QR standby di port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server HTTP Express standby di port ${PORT}`));
 
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const Groq = require('groq-sdk');
 const axios = require('axios');
 const pino = require('pino');
 const fs = require('fs');
+const qrcode = require('qrcode-terminal'); // 💡 Pakai qrcode-terminal ukuran kecil
 const NodeCache = require('node-cache');
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
@@ -74,7 +37,7 @@ const chatHistories = {};
 const msgRetryCounterCache = new NodeCache();
 
 async function startBot() {
-    const SESSION_DIR = 'sesi_qr_web';
+    const SESSION_DIR = 'sesi_qr_terminal';
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     const { version } = await fetchLatestBaileysVersion();
 
@@ -94,23 +57,19 @@ async function startBot() {
 
     sock.ev.on('creds.update', async () => { try { await saveCreds(); } catch (e) {} });
 
-    sock.ev.on('connection.update', async (update) => {
+    sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
         
         if (qr) {
-            // Ubah string QR mentah jadi format gambar Data URL (Base64) yang besar
-            try {
-                latestQR = await qrcode.toDataURL(qr);
-                console.log('\n==================================================');
-                console.log('📌 QR CODE SIAP! Buka URL Railway lu di browser buat scan.');
-                console.log('==================================================\n');
-            } catch (err) {
-                console.error('Gagal generate QR web:', err);
-            }
+            console.log('\n==================================================');
+            console.log('📌 SCAN QR CODE DI BAWAH INI DENGAN WHATSAPP LU:');
+            console.log('==================================================\n');
+            // 💡 Mode { small: true } bikin ukuran QR-nya jadi kecil dan rapi di layar log Railway!
+            qrcode.generate(qr, { small: true });
+            console.log('\n==================================================\n');
         }
 
         if (connection === 'close') {
-            latestQR = '';
             const statusCode = (lastDisconnect?.error)?.output?.statusCode;
             console.log(`⚠️ Koneksi terputus. Kode status: ${statusCode}. Menyambungkan ulang...`);
             
@@ -122,7 +81,6 @@ async function startBot() {
                 setTimeout(startBot, 3000);
             }
         } else if (connection === 'open') {
-            latestQR = '';
             console.log('🎉 BOT BERHASIL TERTAUT DAN AMAN DI SERVER RAILWAY 24/7!');
         }
     });
@@ -139,7 +97,7 @@ async function startBot() {
         const isFromMe = msg.key.fromMe;
         const isSelfChat = senderNumber === NOMOR_BOT || senderJid.includes(NOMOR_BOT);
 
-        if (isFromMe && !isSelfChat) return; 
+        if (isFromMe && !isSelfChat) return; // Anti-nimbrung mutlak
 
         const isAdmin = senderNumber === NOMOR_ADMIN || senderNumber === NOMOR_BOT || isSelfChat;
 
@@ -239,7 +197,7 @@ ATURAN UTAMA:
 3. KETIKA ORDER OTOMATIS: Berikan format [AUTO_ORDER:KODE_LAYANAN|ID_TUJUAN] di akhir pesan.
 4. JANGAN CHAT KE GRUP.`;
 
-                let groqMessages = [{ role: "system", content: systemPrompt }, ...chatHistories[senderJid]];
+let groqMessages = [{ role: "system", content: systemPrompt }, ...chatHistories[senderJid]];
 
                 if (isImage) {
                     const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
