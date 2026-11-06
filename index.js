@@ -3,38 +3,93 @@ require('dotenv').config();
 process.on('uncaughtException', (err) => console.error('🚨 UNCAUGHT EXCEPTION:', err?.message || err));
 process.on('unhandledRejection', (err) => console.error('🚨 UNHANDLED REJECTION:', err?.message || err));
 
-const crypto = require('crypto');
-if (!globalThis.crypto) {
-    globalThis.crypto = crypto.webcrypto || crypto;
-}
-
-// Tambahan: downloadMediaMessage buat unduh gambar
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { MongoClient } = require('mongodb');
+const { default: makeWASocket, initAuthCreds, BufferJSON, proto, DisconnectReason, fetchLatestBaileysVersion, Browsers, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const Groq = require('groq-sdk');
 const express = require('express');
 const axios = require('axios');
 const pino = require('pino');
-const fs = require('fs');
 const NodeCache = require('node-cache');
 
-const msgRetryCounterCache = new NodeCache();
 const app = express();
 const PORT = process.env.PORT || 3000;
-app.get('/', (req, res) => res.send('Server Lapak Siqinz (AI Vision & Menu) Aktif!'));
-app.listen(PORT, () => console.log(`🚀 Server Express jalan di port ${PORT}`));
+app.get('/', (req, res) => res.send('Server Lapak Siqinz (MongoDB Edition) Aktif!'));
+app.listen(PORT, () => console.log(`🚀 Server jalan di port ${PORT}`));
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const VIP_API_KEY = process.env.VIP_API_KEY;
 const VIP_SIGN = process.env.VIP_SIGN;
+const NOMOR_BOT = '6283878322624'; 
 
-const NOMOR_ADMIN = '6283878322624'; 
-const NOMOR_BOT_PAIRING = '6283878322624';
-
-// SAKLAR AI (Default: Mati)
 let isAiActive = false;
+const msgRetryCounterCache = new NodeCache();
+
+// ==========================================
+// ADAPTOR PENYIMPANAN SESI KE MONGODB
+// ==========================================
+async function useMongoDBAuthState(collection) {
+    const readData = async (id) => {
+        try {
+            const data = await collection.findOne({ _id: id });
+            return data ? JSON.parse(JSON.stringify(data.data), BufferJSON.reviver) : null;
+        } catch (error) { return null; }
+    };
+    const writeData = async (data, id) => {
+        const value = JSON.parse(JSON.stringify(data, BufferJSON.replacer));
+        await collection.replaceOne({ _id: id }, { _id: id, data: value }, { upsert: true });
+    };
+    const removeData = async (id) => {
+        await collection.deleteOne({ _id: id });
+    };
+
+    let creds = await readData('creds');
+    if (!creds) {
+        creds = initAuthCreds();
+        await writeData(creds, 'creds');
+    }
+
+    return {
+        state: {
+            creds,
+            keys: {
+                get: async (type, ids) => {
+                    const data = {};
+                    await Promise.all(ids.map(async id => {
+                        let value = await readData(`${type}-${id}`);
+                        if (type === 'app-state-sync-key' && value) {
+                            value = proto.Message.AppStateSyncKeyData.fromObject(value);
+                        }
+                        data[id] = value;
+                    }));
+                    return data;
+                },
+                set: async (data) => {
+                    const tasks = [];
+                    for (const category in data) {
+                        for (const id in data[category]) {
+                            const value = data[category][id];
+                            const key = `${category}-${id}`;
+                            tasks.push(value ? writeData(value, key) : removeData(key));
+                        }
+                    }
+                    await Promise.all(tasks);
+                }
+            }
+        },
+        saveCreds: () => writeData(creds, 'creds')
+    };
+}
 
 async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_session');
+    console.log('⏳ Konek ke MongoDB Atlas...');
+    const mongoClient = new MongoClient(process.env.MONGODB_URI);
+    await mongoClient.connect();
+    console.log('✅ Berhasil nyambung ke Database!');
+    
+    const db = mongoClient.db('whatsapp_api');
+    const authCollection = db.collection('auth_session_baileys');
+    
+    const { state, saveCreds } = await useMongoDBAuthState(authCollection);
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
@@ -53,177 +108,133 @@ async function startBot() {
     if (!sock.authState.creds.registered) {
         setTimeout(async () => {
             try {
-                console.log('⏳ Meminta kode pairing 8 digit...');
-                const code = await sock.requestPairingCode(NOMOR_BOT_PAIRING);
-                console.log('\n==================================================');
+                const code = await sock.requestPairingCode(NOMOR_BOT);
                 console.log(`🔥 KODE PAIRING LU BRE: ${code}`);
-                console.log('==================================================\n');
-            } catch (err) {
-                console.error('❌ Gagal generate Kode Pairing:', err?.message || err);
-            }
+            } catch (err) {}
         }, 8000);
     }
 
-    sock.ev.on('creds.update', async () => {
-        try { await saveCreds(); } catch (e) {}
-    });
+    sock.ev.on('creds.update', async () => { try { await saveCreds(); } catch (e) {} });
 
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
             const statusCode = (lastDisconnect?.error)?.output?.statusCode;
             if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403) {
-                console.log('🚨 Sesi ditolak WA! Menghapus cache lama...');
-                try { sock.end(undefined); } catch (e) {}
-                setTimeout(() => {
-                    try { if (fs.existsSync('auth_session')) fs.rmSync('auth_session', { recursive: true, force: true }); } catch (e) {}
-                    startBot();
-                }, 2000);
+                console.log('🚨 Sesi ditolak WA! Mereset database login...');
+                authCollection.drop().catch(() => {}); // Hapus sesi lama di MongoDB
+                setTimeout(startBot, 2000);
             } else {
                 setTimeout(startBot, 3000);
             }
         } else if (connection === 'open') {
-            console.log('🎉 AKHIRNYA! BOT LAPAK SIQINZ BERHASIL TERTAUT!');
+            console.log('🎉 BOT BERHASIL TERTAUT (SESI AMAN DI MONGODB)!');
         }
     });
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
         const msg = messages[0];
-        if (!msg || !msg.message || msg.key.fromMe) return;
+        if (!msg || !msg.message) return;
+
+        const isFromMe = msg.key.fromMe;
+        if (isFromMe && (msg.key.id.startsWith('BAE5') || msg.key.id.length === 16 || msg.key.id.length === 32)) return;
 
         const senderJid = msg.key.remoteJid;
         if (!senderJid || senderJid.endsWith('@g.us') || senderJid === 'status@broadcast') return;
 
         const senderNumber = senderJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
-        
-        // Ambil isi teks, baik dari chat biasa maupun caption gambar
+        const isAdmin = isFromMe || senderNumber === NOMOR_BOT;
+
         let messageContent = msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || '';
         if (!messageContent.trim() && !msg.message.imageMessage) return;
 
-        // Cek apakah pesan ini gambar
         const isImage = msg.message.imageMessage ? true : false;
+        const textLower = messageContent.toLowerCase();
 
-        // ==========================================
         // 1. MENU UTAMA
-        // ==========================================
-        if (messageContent.toLowerCase() === 'menu' || messageContent.toLowerCase() === '!menu') {
-            let menuText = `*👾 MENU LAPAK SIQINZ 👾*\n\n`;
-            menuText += `1. *Daftar Game* (Ketik: !game)\n`;
-            menuText += `2. *Format Order* (Ketik: !format)\n`;
-            menuText += `3. *Hubungi Admin* (Ketik: !admin)\n\n`;
-            
-            // Menu khusus kalau yang ngechat lu (Admin)
-            if (senderNumber === NOMOR_ADMIN) {
-                menuText += `*👑 PANEL ADMIN (RAHASIA):*\n`;
-                menuText += `Status AI: ${isAiActive ? '✅ NYALA' : '❌ MATI'}\n`;
-                menuText += `- *!on-ai* (Nyalakan asisten AI)\n`;
-                menuText += `- *!off-ai* (Matikan asisten AI)\n`;
-                menuText += `- *!ceksaldo* (Cek sisa saldo VIP)\n`;
-                menuText += `- *!proses [produk] [id]* (Tembak orderan)\n`;
+        if (textLower === 'menu' || textLower === '!menu') {
+            let menuText = `*🎮 SELAMAT DATANG DI LAPAK SIQINZ 🎮*\n_Pusat Top Up Game Termurah & Terpercaya_\n\n` +
+                           `*📋 MENU PELANGGAN:*\n➤ *!game* (Daftar Game)\n➤ *!format* (Cara Order)\n➤ *!admin* (Hubungi Owner)\n\n`;
+            if (isAdmin) {
+                menuText += `*👑 PANEL KHUSUS OWNER:*\nStatus AI: ${isAiActive ? '✅ NYALA' : '❌ MATI'}\n` +
+                            `➤ *!on-ai* (Nyalakan AI)\n➤ *!off-ai* (Matikan AI)\n➤ *!ceksaldo* (Cek VIP)\n➤ *!proses <kode> <id>* (Tembak Order)\n`;
             }
-            
-            // Balas dengan format "Quoted Reply" (Geser pesan)
             await sock.sendMessage(senderJid, { text: menuText }, { quoted: msg });
             return;
         }
 
-        // ==========================================
-        // 2. KONTROL SAKLAR AI (KHUSUS ADMIN)
-        // ==========================================
-        if (messageContent === '!on-ai') {
-            if (senderNumber !== NOMOR_ADMIN) return;
-            isAiActive = true;
-            await sock.sendMessage(senderJid, { text: '🤖 *Mode AI Aktif!* Sekarang bot bakal balas otomatis.' }, { quoted: msg });
-            return;
+        if (textLower === '!game') {
+            await sock.sendMessage(senderJid, { text: `*🎮 DAFTAR GAME*\n1. *Mobile Legends (ML)*\n2. *Free Fire (FF)*\nKetik *!format* untuk lanjut order.` }, { quoted: msg }); return;
         }
-        if (messageContent === '!off-ai') {
-            if (senderNumber !== NOMOR_ADMIN) return;
-            isAiActive = false;
-            await sock.sendMessage(senderJid, { text: '💤 *Mode AI Dimatikan!* Cuma jawab menu doang sekarang.' }, { quoted: msg });
-            return;
+        if (textLower === '!format') {
+            await sock.sendMessage(senderJid, { text: `*🛒 FORMAT ORDER*\nGame:\nID Player:\nNominal Order:\n\n_Kirim bukti transfer ke sini._` }, { quoted: msg }); return;
+        }
+        if (textLower === '!admin') {
+            await sock.sendMessage(senderJid, { text: `📞 *Kontak Owner:* Muhamad Sodikin` }, { quoted: msg }); return;
         }
 
-        // ==========================================
-        // 3. FITUR ADMIN: VIP RESELLER
-        // ==========================================
-        if (messageContent === '!ceksaldo') {
-            if (senderNumber !== NOMOR_ADMIN) return;
-            await sock.sendMessage(senderJid, { text: '⏳ Bentar bre, ngecek brankas...' }, { quoted: msg });
+        // 3. SAKLAR AI 
+        if (textLower === '!on-ai') {
+            if (!isAdmin) return;
+            isAiActive = true;
+            await sock.sendMessage(senderJid, { text: '🤖 *Mode AI Aktif!* Bot Qinz siap membalas.' }, { quoted: msg }); return;
+        }
+        if (textLower === '!off-ai') {
+            if (!isAdmin) return;
+            isAiActive = false;
+            await sock.sendMessage(senderJid, { text: '💤 *Mode AI Dimatikan!*' }, { quoted: msg }); return;
+        }
+
+        // 4. API VIP RESELLER 
+        if (textLower === '!ceksaldo') {
+            if (!isAdmin) return;
             try {
                 const payload = new URLSearchParams({ key: VIP_API_KEY, sign: VIP_SIGN });
                 const res = await axios.post('https://vipreseller.co.id/api/profile', payload);
                 await sock.sendMessage(senderJid, { text: `📊 *Hasil Cek Saldo:*\n\n${JSON.stringify(res.data, null, 2)}` }, { quoted: msg });
-            } catch (e) {
-                await sock.sendMessage(senderJid, { text: `❌ Gagal konek ke VIP Reseller.` }, { quoted: msg });
-            }
+            } catch (e) { await sock.sendMessage(senderJid, { text: `❌ Gagal konek ke API VIP Reseller.` }, { quoted: msg }); }
             return;
         }
-
-        if (messageContent.startsWith('!proses')) {
-            if (senderNumber !== NOMOR_ADMIN) return;
+        if (textLower.startsWith('!proses')) {
+            if (!isAdmin) return;
             const parts = messageContent.split(' ').filter(Boolean);
             if (parts.length < 3) return;
             
-            await sock.sendMessage(senderJid, { text: `⏳ Memproses pesanan ${parts[1]} untuk ID ${parts[2]}...` }, { quoted: msg });
             try {
                 const payload = new URLSearchParams({ key: VIP_API_KEY, sign: VIP_SIGN, type: 'order', service: parts[1], data_no: parts[2] });
                 const res = await axios.post('https://vipreseller.co.id/api/game-feature', payload);
-                await sock.sendMessage(senderJid, { text: `📋 Respon API:\n${JSON.stringify(res.data)}` }, { quoted: msg });
-            } catch (e) {
-                await sock.sendMessage(senderJid, { text: `❌ Gagal eksekusi transaksi.` }, { quoted: msg });
-            }
+                await sock.sendMessage(senderJid, { text: `📋 *Respon API:*\n${JSON.stringify(res.data, null, 2)}` }, { quoted: msg });
+            } catch (e) { await sock.sendMessage(senderJid, { text: `❌ Gagal eksekusi transaksi.` }, { quoted: msg }); }
             return;
         }
 
-        // ==========================================
-        // 4. RESPON GROQ AI (VISION + TEKS)
-        // ==========================================
+        // 5. RESPON AI VISION GROQ
         if (isAiActive && !messageContent.startsWith('!')) {
             try {
-                let groqMessages = [
-                    {
-                        role: "system",
-                        content: "Lu adalah admin CS Lapak Siqinz bernama Bot Qinz. Jawab pake bahasa santai anak tongkrongan (bre, lu, gua). Tugas lu melayani pertanyaan top up game dan ngecek bukti gambar."
-                    }
-                ];
+                let groqMessages = [{ role: "system", content: "Lu adalah asisten admin Lapak Siqinz bernama Bot Qinz. Jawab pake bahasa santai ala anak tongkrongan. Tugas lu melayani top up game dan ngecek screenshot transfer." }];
 
                 if (isImage) {
-                    // Kalau ada gambar, unduh dulu gambarnya
                     const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
                     const base64Image = buffer.toString('base64');
-                    
                     groqMessages.push({
                         role: "user",
                         content: [
-                            { type: "text", text: messageContent || "Tolong cek gambar bukti screenshot ini bre." },
+                            { type: "text", text: messageContent || "Tolong cek bukti screenshot ini bre." },
                             { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
                         ]
                     });
                 } else {
-                    // Kalau teks biasa
-                    groqMessages.push({
-                        role: "user",
-                        content: messageContent
-                    });
+                    groqMessages.push({ role: "user", content: messageContent });
                 }
 
-                // Gunakan model yang support baca gambar
                 const chatCompletion = await groq.chat.completions.create({
-                    messages: groqMessages,
-                    model: "llama-3.2-90b-vision-preview",
-                    temperature: 0.7,
+                    messages: groqMessages, model: "llama-3.2-90b-vision-preview", temperature: 0.7,
                 });
-
                 const responseText = chatCompletion.choices[0]?.message?.content || '';
-                if (responseText) {
-                    // Balas sambil ngutip (reply) pesan si pengirim
-                    await sock.sendMessage(senderJid, { text: responseText }, { quoted: msg });
-                }
+                if (responseText) await sock.sendMessage(senderJid, { text: responseText }, { quoted: msg });
             } catch (err) {
-                console.error('❌ Groq AI Error:', err?.message || err);
-                // Kalau error limit atau gagal, jangan diam aja
-                await sock.sendMessage(senderJid, { text: 'Waduh bre, AI-nya lagi puyeng bentar. Coba kirim ulang.' }, { quoted: msg });
+                await sock.sendMessage(senderJid, { text: 'Waduh bre, AI-nya lagi loading berat. Coba ulang.' }, { quoted: msg });
             }
         }
     });
