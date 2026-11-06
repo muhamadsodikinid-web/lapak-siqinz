@@ -25,8 +25,8 @@ const VIP_API_ID = process.env.VIP_API_ID;
 const VIP_API_KEY = process.env.VIP_API_KEY;
 
 // 👑 PENGATURAN NOMOR EKSPLISIT
-const NOMOR_BOT = '6283878322624';          // Nomor WA Bot
-const NOMOR_ADMIN = '6283142628969';      // Nomor WA Admin
+const NOMOR_BOT = '6283878322624';          // Nomor WhatsApp Bot lu
+const NOMOR_ADMIN = '6283142628969';        // Nomor Khusus Admin
 
 function getVipSign() {
     if (process.env.VIP_SIGN) {
@@ -35,8 +35,6 @@ function getVipSign() {
     return crypto.createHash('md5').update(VIP_API_ID + VIP_API_KEY).digest('hex');
 }
 
-let isBotActive = true;       
-let aiMode = 'TOPUP';         
 const chatHistories = {};     
 const msgRetryCounterCache = new NodeCache();
 
@@ -98,56 +96,32 @@ async function startBot() {
 
         const senderNumber = senderJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
         const isFromMe = msg.key.fromMe;
+        const isSelfChat = senderNumber === NOMOR_BOT || senderJid.includes(NOMOR_BOT);
 
         // 🚨 2. BENTENG MUTLAK ANTI-NIMBRUNG
-        // Kalau lu (WA Bot) nge-chat orang lain (selain nomor admin/bot), BOT DIAM TOTAL.
-        if (isFromMe && senderNumber !== NOMOR_BOT && senderNumber !== NOMOR_ADMIN) {
+        // Kalau lu (via HP/WA Web bot) nge-chat nomor orang lain, bot bakal STOP di sini dan DIAM TOTAL.
+        if (isFromMe && !isSelfChat) {
             return; 
         }
 
-        // 👑 3. VALIDASI ADMIN FLEKSIBEL
-        // Diakui admin kalau: pengirimnya NOMOR_ADMIN, atau pengirimnya NOMOR_BOT, atau pesannya lu ketik sendiri.
-        const isAdmin = senderNumber === NOMOR_ADMIN || senderNumber === NOMOR_BOT || isFromMe;
+        const isAdmin = senderNumber === NOMOR_ADMIN || senderNumber === NOMOR_BOT || isSelfChat;
 
         let messageContent = msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || '';
-        console.log(`📩 Pesan dari [${senderNumber}] | isFromMe: ${isFromMe} | isAdmin: ${isAdmin} | Teks: "${messageContent}"`);
-
         if (!messageContent.trim() && !msg.message.imageMessage) return;
 
         const isImage = msg.message.imageMessage ? true : false;
         const textLower = messageContent.toLowerCase();
 
-        // Kontrol Master Switch (Hanya Admin)
-        if (isAdmin) {
-            if (textLower === '!bot-off') {
-                isBotActive = false;
-                await sock.sendMessage(senderJid, { text: '🛑 *Bot Master OFF!* Mengabaikan pembeli.' }, { quoted: msg });
-                return;
-            }
-            if (textLower === '!bot-on') {
-                isBotActive = true;
-                await sock.sendMessage(senderJid, { text: '🟢 *Bot Master ON!* Bot aktif melayani pembeli.' }, { quoted: msg });
-                return;
-            }
-        }
-
-        if (!isBotActive && !isAdmin) return;
-
-        // 1. MENU UTAMA
+        // 1. MENU UTAMA UMUM
         if (textLower === 'menu' || textLower === '!menu') {
             let menuText = `*🎮 SELAMAT DATANG DI LAPAK SIQINZ 🎮*\n_Pusat Top Up Game Termurah & Terpercaya_\n\n` +
                            `*📋 MENU PELANGGAN:*\n➤ *!game* (Daftar Game)\n➤ *!format* (Cara Order)\n➤ *!admin* (Hubungi Owner)\n\n`;
             
             if (isAdmin) {
                 menuText += `*👑 PANEL KHUSUS ADMIN:*\n` +
-                            `Status Bot Utama: ${isBotActive ? '🟢 NYALA' : '🔴 MATI'}\n` +
-                            `Status AI: *${aiMode}*\n\n` +
-                            `➤ *!bot-on* / *!bot-off*\n` +
-                            `➤ *!ai-topup* (Mode Auto Top-Up)\n` +
-                            `➤ *!ai-chat* (Mode AI Manusia)\n` +
-                            `➤ *!ai-off*\n` +
+                            `Status AI: 🟢 ALWAYS ON (Otomatis)\n` +
                             `➤ *!ceksaldo*\n` +
-                            `➤ *!proses <kode> <id>*\n`;
+                            `➤ *!proses <kode> <id>* (Tembak Manual)\n`;
             }
             await sock.sendMessage(senderJid, { text: menuText }, { quoted: msg });
             return;
@@ -163,32 +137,7 @@ async function startBot() {
             await sock.sendMessage(senderJid, { text: `📞 *Kontak Owner:* Muhamad Sodikin` }, { quoted: msg }); return;
         }
 
-        // 2. SAKLAR MODE AI
-        if (textLower === '!ai-topup') {
-            if (!isAdmin) { await sock.sendMessage(senderJid, { text: '⚠️ Lu bukan admin, bre!' }, { quoted: msg }); return; }
-            aiMode = 'TOPUP';
-            chatHistories[senderJid] = []; 
-            await sock.sendMessage(senderJid, { text: '🤖 *AI Admin Top-Up (Full Auto) Aktif!*' }, { quoted: msg });
-            return;
-        }
-
-        if (textLower === '!ai-chat') {
-            if (!isAdmin) { await sock.sendMessage(senderJid, { text: '⚠️ Lu bukan admin, bre!' }, { quoted: msg }); return; }
-            aiMode = 'CHAT';
-            chatHistories[senderJid] = []; 
-            await sock.sendMessage(senderJid, { text: '👥 *AI Pengganti Manusia Aktif!* (Short Text & Adaptif Bahasa).' }, { quoted: msg });
-            return;
-        }
-        
-        if (textLower === '!ai-off') {
-            if (!isAdmin) return;
-            aiMode = 'OFF';
-            chatHistories[senderJid] = [];
-            await sock.sendMessage(senderJid, { text: '💤 *Semua Mode AI Dimatikan!*' }, { quoted: msg });
-            return;
-        }
-
-        // 3. API VIP RESELLER MANUAL
+        // 2. API VIP RESELLER MANUAL (HANYA BISA DIAKSES ADMIN)
         if (textLower === '!ceksaldo') {
             if (!isAdmin) return;
             await sock.sendMessage(senderJid, { text: '⏳ Mengecek saldo ke server VIP Reseller...' }, { quoted: msg });
@@ -229,35 +178,21 @@ async function startBot() {
             return;
         }
 
-        // 4. PROSES AI DENGAN MEMORI + FULL AUTO VIP
-        if (aiMode !== 'OFF' && !messageContent.startsWith('!')) {
+        // 3. PROSES AI (SELALU AKTIF, OTOMATIS CERDAS)
+        if (!messageContent.startsWith('!')) {
             try {
                 if (!chatHistories[senderJid]) {
                     chatHistories[senderJid] = [];
                 }
 
-                let systemPrompt = '';
-
-                if (aiMode === 'TOPUP') {
-                    systemPrompt = `Lu adalah Admin Top-Up profesional untuk "Lapak Siqinz". 
-ATURAN & TUGAS UTAMA:
-1. Boleh memberikan penjelasan detail (Long Text) agar pembeli paham.
-2. JANGAN PERNAH CHAT KE GRUP.
-3. KETIKA MENERIMA BUKTI TRANSFER (GAMBAR) DAN FORMAT ORDER: Analisis secara teliti tanggal, jam, nominal, dan pastikan NOMOR REKENING TUJUAN HARUS KE: 083142628969 atas nama MUHAMAD SODIKIN.
-4. Jika bukti transfer VALID/ASLI dan data order (KODE LAYANAN & ID TUJUAN) sudah lengkap diberikan oleh pembeli, LU WAJIB MEMBERIKAN FORMAT KHUSUS DI AKHIR BALASAN LU DENGAN FORMAT:
-[AUTO_ORDER:KODE_LAYANAN|ID_TUJUAN]
-Contoh: [AUTO_ORDER:ml5|12345678(1234)]
-Jika bukti transfer palsu atau kurang, jangan sertakan format AUTO_ORDER tersebut, dan tolak dengan tegas.
-5. INGAT RIWAYAT PERCAKAPAN: Selalu ingat apa yang sudah dibahas sebelumnya dengan user ini agar tidak pelupa.`;
-                } else if (aiMode === 'CHAT') {
-                    systemPrompt = `Lu adalah Muhamad Sodikin (pribadi asli di luar urusan top-up). 
-ATURAN UTAMA:
-1. WAJIB ADAPTIF BAHASA: Sesuaikan bahasa lu dengan bahasa yang dipakai lawan bicara (Misal dia pakai bahasa Sunda, balas pakai bahasa Sunda yang natural; jika bahasa Indonesia, balas bahasa Indonesia santai).
-2. Sifat lu: ramah, santai, lucu, manusiawi, sopan.
-3. BALASAN WAJIB SUPER SINGKAT (SHORT TEXT): Cukup 5 sampai 10 kata saja!
-4. INGAT RIWAYAT PERCAKAPAN: Nyambung terus dengan topik sebelumnya, jangan planga-plongo atau lupa.
-5. JANGAN PERNAH CHAT KE GRUP.`;
-                }
+                // AI SATU OTAK: Bisa ngobrol santai ATAU jadi admin top-up secara otomatis
+                const systemPrompt = `Lu adalah Muhamad Sodikin, pemilik "Lapak Siqinz". Lu punya 2 mode yang jalan otomatis:
+1. JIKA ORANG CUMA NGOBROL BIASA: Lu balas santai, ramah, agak lucu, adaptif bahasa (kalo dia Sunda, balas Sunda; kalo Indo, balas Indo). Balasan WAJIB SINGKAT 5-10 kata aja.
+2. JIKA ORANG KIRIM GAMBAR/STRUK/FORMAT ORDER: Lu langsung berubah jadi Admin Top-Up Profesional. Analisis teliti bukti transfernya: PASTIKAN rekening tujuan HARUS KE 083142628969 atas nama MUHAMAD SODIKIN.
+   - Kalau bukti VALID/ASLI, balas ramah dan lu WAJIB kasih format ini di akhir pesan: [AUTO_ORDER:KODE_LAYANAN|ID_TUJUAN] (Contoh: [AUTO_ORDER:ml5|1234567(1234)]).
+   - Kalau palsu/kurang, tolak tegas tanpa format AUTO_ORDER.
+3. INGAT RIWAYAT: Selalu ingat chat sebelumnya dengan user ini.
+4. JANGAN PERNAH CHAT KE GRUP.`;
 
                 let groqMessages = [
                     { role: "system", content: systemPrompt },
@@ -287,12 +222,14 @@ ATURAN UTAMA:
                 let responseText = chatCompletion.choices[0]?.message?.content || '';
                 
                 if (responseText) {
+                    // Deteksi kalau AI minta eksekusi otomatis ke VIP Reseller
                     const autoOrderMatch = responseText.match(/\[AUTO_ORDER:(.*?)\|(.*?)\]/);
                     
-                    if (autoOrderMatch && aiMode === 'TOPUP') {
+                    if (autoOrderMatch) {
                         const serviceCode = autoOrderMatch[1].trim();
                         const targetDataNo = autoOrderMatch[2].trim();
 
+                        // Bersihkan tag AUTO_ORDER biar nggak kelihatan sama pembeli
                         let cleanResponse = responseText.replace(/\[AUTO_ORDER:.*?\]/g, '').trim();
                         cleanResponse += `\n\n✅ *Bukti TF Valid! Sistem otomatis menembak pesanan ke VIP Reseller...*`;
                         await sock.sendMessage(senderJid, { text: cleanResponse }, { quoted: msg });
@@ -316,9 +253,11 @@ ATURAN UTAMA:
                             await sock.sendMessage(senderJid, { text: `❌ Gagal otomatis nembak ke VIP Reseller: ${vipErr.message}` });
                         }
                     } else {
+                        // Kalo cuma chat biasa, langsung kirim
                         await sock.sendMessage(senderJid, { text: responseText }, { quoted: msg });
                     }
 
+                    // Simpan ke memori otak AI
                     chatHistories[senderJid].push({ role: "user", content: messageContent });
                     chatHistories[senderJid].push({ role: "assistant", content: responseText });
                     if (chatHistories[senderJid].length > 10) {
