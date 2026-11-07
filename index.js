@@ -4,6 +4,7 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLat
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
+const qrcode = require('qrcode-terminal'); // Alat gambar QR di CMD
 
 const messageHandler = require('./handler'); 
 
@@ -15,20 +16,17 @@ const PORT = process.env.PORT || 8080;
 app.get('/', (req, res) => res.send('Mesin Lapak Siqinz Aktif!'));
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Web Server standby di port ${PORT}`));
 
-const NOMOR_BOT = '6283878322624'; // 🔥 NOMOR WA BOT LU (TANPA +)
+const NOMOR_BOT = '6283878322624'; // Ganti nomor bot lu (opsional kalau mau pakai pairing)
 const SESSION_DIR = './sesi_lapak';
 
 async function startBot() {
-    // 1. Cek apakah ada SESSION_ID tersimpan di Environment Variables Railway
+    // Kalau SESSION_ID ada di environment variables, load otomatis
     if (process.env.SESSION_ID) {
         try {
             if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR, { recursive: true });
-            const credsPath = path.join(SESSION_DIR, 'creds.json');
-            fs.writeFileSync(credsPath, process.env.SESSION_ID);
-            console.log('✅ SESSION_ID dimuat dari Variables Railway. Melewati pairing...');
-        } catch (e) {
-            console.log('❌ Gagal memuat SESSION_ID:', e.message);
-        }
+            fs.writeFileSync(path.join(SESSION_DIR, 'creds.json'), process.env.SESSION_ID);
+            console.log('✅ Sesi dimuat dari Environment Variables Railway.');
+        } catch (e) {}
     }
 
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
@@ -44,51 +42,38 @@ async function startBot() {
 
     sock.ev.on('creds.update', saveCreds);
 
-    // 2. Kalau belum terdaftar, otomatis minta Pairing Code dan cetak di Logs Railway
-    if (!sock.authState.creds.registered) {
-        setTimeout(async () => {
-            try {
-                let phoneNumber = NOMOR_BOT.replace(/[^0-9]/g, '');
-                console.log(`⏳ Meminta Kode Pairing untuk nomor: ${phoneNumber}...`);
-                let code = await sock.requestPairingCode(phoneNumber);
-                code = code?.match(/.{1,4}/g)?.join("-") || code;
-                console.log('\n========================================');
-                console.log(`🔑 KODE PAIRING RAILWAY LU: ${code}`);
-                console.log('========================================\n');
-            } catch (err) {
-                console.log('❌ Gagal minta pairing code:', err.message);
-            }
-        }, 5000);
-    }
-
+    // 🔥 JIKA BELUM LOGIN, TAMPILKAN QR / PAIRING DI CMD SAAT DI-RUN
     sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update;
+        const { connection, lastDisconnect, qr } = update;
         
+        if (qr) {
+            console.log('\n==================================================');
+            console.log('📷 SCAN BARKODE INI LANGSUNG DARI CMD LU!');
+            console.log('==================================================\n');
+            qrcode.generate(qr, { small: true });
+        }
+
         if (connection === 'close') {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
-            console.log(`⚠️ Koneksi terputus (Status: ${statusCode}). Reconnecting...`);
+            console.log(`⚠️ Koneksi terputus (${statusCode}). Reconnecting...`);
             if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
                 try { fs.rmSync(SESSION_DIR, { recursive: true, force: true }); } catch(e){}
             }
             setTimeout(startBot, 3000);
         } else if (connection === 'open') {
-            console.log('🎉 BOT BERHASIL TERSAMBUNG FULL DI WA!');
+            console.log('🎉 BOT BERHASIL KONEK DAN AKTIF 24/7 DI RAILWAY!');
             
-            // 3. 🔥 PAS UDAH KONEK, OTOMATIS CETAK SESSION KEY DI LOGS BUAT DISIMPEN KE VARIABEL
+            // Otomatis cetak Session Key buat jaga-jaga
             setTimeout(async () => {
                 try {
                     const credsPath = path.join(SESSION_DIR, 'creds.json');
                     if (fs.existsSync(credsPath)) {
                         const sessionKey = fs.readFileSync(credsPath).toString('utf-8');
-                        console.log('\n==================================================');
-                        console.log('🔥 SALIN TEKS DI BAWAH INI KE VARIABLE `SESSION_ID` RAILWAY 🔥');
-                        console.log('==================================================\n');
+                        console.log('\n================ SESSION KEY ===============');
                         console.log(sessionKey);
-                        console.log('\n==================================================\n');
+                        console.log('===========================================\n');
                     }
-                } catch (err) {
-                    console.log('Gagal cetak session key:', err.message);
-                }
+                } catch (err) {}
             }, 3000);
         }
     });
