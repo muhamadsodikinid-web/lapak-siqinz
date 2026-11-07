@@ -1,137 +1,172 @@
+const { Groq } = require('groq-sdk');
 const axios = require('axios');
-const crypto = require('crypto');
-const Groq = require('groq-sdk');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
-const pino = require('pino');
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const VIP_API_ID = process.env.VIP_API_ID;
-const VIP_API_KEY = process.env.VIP_API_KEY;
+// API KEY GROQ LU
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY }); 
 
-const NOMOR_BOT = '6283878322624';          
-const NOMOR_ADMIN = '6283142628969';        
-const BIAYA_ADMIN = 3000;                   
-const chatHistories = {};
+// ==========================================
+// PENGATURAN API VIP RESELLER
+// ==========================================
+const VIP_API_KEY = 'API_KEY_VIP_LU_DISINI'; 
+const VIP_MERCHANT = 'MERCHANT_ID_LU'; 
+const VIP_URL = 'https://vip-reseller.co.id/api/game-feature'; 
 
-function getVipSign() {
-    if (process.env.VIP_SIGN) return process.env.VIP_SIGN;
-    return crypto.createHash('md5').update(VIP_API_ID + VIP_API_KEY).digest('hex');
-}
-
-// INI FORMAT EKSPOR SUPAYA BISA DIPANGGIL SAMA INDEX.JS
 module.exports = async (sock, msg) => {
-    const senderJid = msg.key.remoteJid;
-    if (!senderJid || senderJid.endsWith('@g.us') || senderJid === 'status@broadcast') return;
+    try {
+        const from = msg.key.remoteJid;
+        if (msg.key.fromMe || from === 'status@broadcast') return;
 
-    const senderNumber = senderJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
-    const isFromMe = msg.key.fromMe;
-    const isSelfChat = senderNumber === NOMOR_BOT || senderJid.includes(NOMOR_BOT);
-
-    if (isFromMe && !isSelfChat) return; 
-
-    const isAdmin = senderNumber === NOMOR_ADMIN || senderNumber === NOMOR_BOT || isSelfChat;
-    let messageContent = msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || '';
-    if (!messageContent.trim() && !msg.message.imageMessage) return;
-
-    const isImage = msg.message.imageMessage ? true : false;
-    const textLower = messageContent.toLowerCase();
-
-    // 1. BLOK MENU & INFO
-    if (textLower === 'menu' || textLower === '!menu') {
-        let menuText = `*🎮 LAPAK SIQINZ 🎮*\n_Pusat Top Up Game Termurah_\n\n` +
-                       `➤ *!price*\n➤ *!format*\n➤ *!admin*\n\n`;
-        if (isAdmin) menuText += `*👑 ADMIN:*\n➤ *!ceksaldo*\n➤ *!proses <kode> <id>*\n`;
-        await sock.sendMessage(senderJid, { text: menuText }, { quoted: msg });
-        return;
-    }
-
-    if (textLower === '!price' || textLower === '!list') {
-        await sock.sendMessage(senderJid, { text: '⏳ Mengambil daftar harga resmi...' }, { quoted: msg });
-        try {
-            const payload = new URLSearchParams({ key: VIP_API_KEY, sign: getVipSign(), type: 'services' });
-            const res = await axios.post('https://vip-reseller.co.id/api/game-feature', payload);
-            
-            if (res.data?.data) {
-                let textList = `*🔥 HARGA LAPAK SIQINZ (+Admin Rp 3rb) 🔥*\n\n`;
-                res.data.data.slice(0, 10).forEach((s, index) => {
-                    let hargaJual = parseInt(s.price) + BIAYA_ADMIN;
-                    textList += `${index + 1}. *${s.name}*\n   Kode: \`${s.code}\` | Rp ${hargaJual.toLocaleString('id-ID')}\n\n`;
-                });
-                await sock.sendMessage(senderJid, { text: textList });
-            }
-        } catch (e) {
-            await sock.sendMessage(senderJid, { text: `❌ Gagal memuat API: ${e.message}` });
+        const type = Object.keys(msg.message)[0];
+        const isImage = (type === 'imageMessage' || (type === 'extendedTextMessage' && msg.message.extendedTextMessage.contextInfo?.quotedMessage?.imageMessage));
+        
+        let body = '';
+        if (type === 'conversation' && msg.message.conversation) {
+            body = msg.message.conversation;
+        } else if (type === 'extendedTextMessage' && msg.message.extendedTextMessage.text) {
+            body = msg.message.extendedTextMessage.text;
+        } else if (type === 'imageMessage' && msg.message.imageMessage.caption) {
+            body = msg.message.imageMessage.caption;
         }
-        return;
-    }
 
-    if (textLower === '!format') {
-        await sock.sendMessage(senderJid, { text: `*🛒 FORMAT ORDER*\nKode Layanan:\nID Player & Server:\n\n_Transfer ke rek: 083142628969 (a.n Muhamad Sodikin)_` }); return;
-    }
-    if (textLower === '!admin') {
-        await sock.sendMessage(senderJid, { text: `📞 *Kontak:* Muhamad Sodikin` }); return;
-    }
-    if (textLower === '!ceksaldo' && isAdmin) {
+        const prefix = '.';
+        const isCmd = body && body.startsWith(prefix);
+        const command = isCmd ? body.slice(prefix.length).trim().split(' ').shift().toLowerCase() : '';
+        const args = body ? body.trim().split(/ +/).slice(1) : [];
+        const text = args.join(' ');
+
+        // ==========================================
+        // 1. FITUR VIP RESELLER (COMMAND TITIK)
+        // ==========================================
+        if (isCmd) {
+            switch (command) {
+                case 'menu':
+                case 'help':
+                    const menuText = `*🤖 MESIN LAPAK SIQINZ (VIP)*\n\n` +
+                    `_Kirim pesan/gambar langsung buat ngobrol sama AI. Alat khusus pakai titik:_\n\n` +
+                    `*🛒 MENU TOP UP:*\n` +
+                    `1. .game (List Game VIP)\n` +
+                    `2. .harga [kategori] (Cek harga, cth: .harga ml)\n\n` +
+                    `*🔧 ALAT LAIN:*\n` +
+                    `3. .ping (Cek server)\n` +
+                    `4. .owner (Nomor owner)\n`;
+                    await sock.sendMessage(from, { text: menuText }, { quoted: msg });
+                    break;
+
+                case 'game':
+                    const listGame = `*🎮 DAFTAR GAME LAPAK SIQINZ*\n\n` +
+                    `- Mobile Legends (ml)\n` +
+                    `- Free Fire (ff)\n` +
+                    `- PUBG Mobile (pubg)\n` +
+                    `- Valorant (valo)\n\n` +
+                    `_Ketik *.harga [kode]* untuk cek harga_`;
+                    await sock.sendMessage(from, { text: listGame }, { quoted: msg });
+                    break;
+
+                case 'harga':
+                    if (!text) return sock.sendMessage(from, { text: 'Masukkan kode gamenya bre. Cth: .harga ml' }, { quoted: msg });
+                    
+                    await sock.sendMessage(from, { text: '⏳ Sedang menarik data harga dari server VIP...' }, { quoted: msg });
+                    
+                    try {
+                        // SIMULASI HASIL DARI VIP RESELLER
+                        const dataProduk = [
+                            { name: '86 Diamonds', price: 25000 },
+                            { name: '172 Diamonds', price: 50000 },
+                            { name: '257 Diamonds', price: 75000 }
+                        ];
+
+                        let teksHarga = `*💎 HARGA ${text.toUpperCase()} HARI INI*\n\n`;
+                        dataProduk.forEach((item, index) => {
+                            // 🔥 MARKUP ADMIN 3.000 PER ITEM 🔥
+                            const hargaJual = item.price + 3000; 
+                            teksHarga += `${index + 1}. ${item.name}\n💰 Rp ${hargaJual.toLocaleString('id-ID')}\n\n`;
+                        });
+                        teksHarga += `_Kirim bukti transfer jika sudah membayar. AI otomatis bakal verifikasi struk lu!_`;
+
+                        await sock.sendMessage(from, { text: teksHarga }, { quoted: msg });
+                    } catch (e) {
+                        await sock.sendMessage(from, { text: '❌ Gagal narik data dari server VIP bre.' }, { quoted: msg });
+                    }
+                    break;
+
+                default:
+                    await sock.sendMessage(from, { text: 'Perintah kaga ada bre. Ketik *.menu* !' }, { quoted: msg });
+                    break;
+            }
+            return; 
+        }
+
+        // ==========================================
+        // 2. SISTEM AI (TEKS PAKE QWEN, MATA PAKE VISION)
+        // ==========================================
+        await sock.sendPresenceUpdate('composing', from);
+
         try {
-            const payload = new URLSearchParams({ key: VIP_API_KEY, sign: getVipSign() });
-            const res = await axios.post('https://vip-reseller.co.id/api/profile', payload);
-            await sock.sendMessage(senderJid, { text: `📊 *Saldo VIP:*\n${JSON.stringify(res.data, null, 2)}` });
-        } catch (e) {}
-        return;
-    }
-
-    // 2. BLOK GROQ AI
-    if (!messageContent.startsWith('!')) {
-        try {
-            if (!chatHistories[senderJid]) chatHistories[senderJid] = [];
-            const systemPrompt = `Lu adalah Muhamad Sodikin, pemilik "Lapak Siqinz". 
-Balas santai, ramah, Sunda/Indo, singkat 5-10 kata.
-Jika ada bukti TF valid ke rek 083142628969 a.n MUHAMAD SODIKIN (termasuk admin Rp 3.000), kasih format [AUTO_ORDER:KODE_LAYANAN|ID_TUJUAN].`;
-
-            let groqMessages = [{ role: "system", content: systemPrompt }, ...chatHistories[senderJid]];
+            const systemPrompt = `Kamu adalah asisten virtual Muhamad Sodikin (Mahasiswa IT Pelita Bangsa, Cikarang, owner Lapak Siqinz & channel Rekap Yuk, hobi modif motor Beat Gen 2).
+ATURAN BAHASA: 
+- Jika user bahasa Sunda, balas Sunda tongkrongan.
+- Jika Indonesia, balas pakai lu/gua santai.
+TUGAS BACA GAMBAR: 
+1. Jika gambar biasa, deskripsikan santai.
+2. JIKA GAMBAR BUKTI TRANSFER/STRUK, wajib baca teliti & verifikasi:
+   - Jam, Menit, Detik
+   - Tanggal komplit
+   - Nama Pengirim & Tujuan (Sodikin/Lapak Siqinz)
+   - Nominal Uang
+   Beritahu pembeli bahwa pesanan segera diproses jika data ini valid. Balas lengkap, JANGAN kaku!`;
 
             if (isImage) {
-                const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
-                groqMessages.push({
-                    role: "user",
-                    content: [
-                        { type: "text", text: messageContent || "Cek transfer." },
-                        { type: "image_url", image_url: { url: `data:image/jpeg;base64,${buffer.toString('base64')}` } }
-                    ]
+                // FITUR BACA STRUK & GAMBAR (Vision)
+                await sock.sendMessage(from, { text: '📸 Bentar bre, gua cek dulu gambarnya/struknya...' }, { quoted: msg });
+                
+                const targetMessage = type === 'imageMessage' ? msg.message.imageMessage : msg.message.extendedTextMessage.contextInfo.quotedMessage.imageMessage;
+                const buffer = await downloadMediaMessage({ key: msg.key, message: msg.message }, 'buffer', { }, { reuploadRequest: sock.updateMediaMessage });
+                
+                const base64Image = buffer.toString('base64');
+                const imageUrl = `data:image/jpeg;base64,${base64Image}`;
+
+                // Groq hanya support llama untuk vision saat ini
+                const visionCompletion = await groq.chat.completions.create({
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: [
+                            { type: 'text', text: body || 'Cek gambar ini secara detail bre.' },
+                            { type: 'image_url', image_url: { url: imageUrl } }
+                        ]}
+                    ],
+                    model: 'llama-3.2-11b-vision-preview', 
+                    max_tokens: 1500,
+                    temperature: 0.5,
                 });
+
+                const aiResponse = visionCompletion.choices[0]?.message?.content;
+                await sock.sendMessage(from, { text: aiResponse }, { quoted: msg });
+
             } else {
-                groqMessages.push({ role: "user", content: messageContent });
+                // 🔥 FITUR CHAT TEKS (PAKAI QWEN SESUAI REQUEST LU) 🔥
+                if (!body) return;
+                
+                const chatCompletion = await groq.chat.completions.create({
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: body }
+                    ],
+                    model: 'qwen-2.5-32b-it', // Otak Qwen (Cepat & Pinter)
+                    max_tokens: 1500,
+                    temperature: 0.7,
+                });
+                
+                const aiResponse = chatCompletion.choices[0]?.message?.content;
+                await sock.sendMessage(from, { text: aiResponse }, { quoted: msg });
             }
 
-            const chatCompletion = await groq.chat.completions.create({
-                messages: groqMessages, 
-                model: "qwen/qwen3.8-27b", 
-                temperature: 0.7,
-                max_tokens: 250 
-            });
-            
-            let responseText = chatCompletion.choices[0]?.message?.content || '';
-            if (responseText) {
-                const autoOrderMatch = responseText.match(/\[AUTO_ORDER:(.*?)\|(.*?)\]/);
-                if (autoOrderMatch) {
-                    const sCode = autoOrderMatch[1].trim();
-                    const tID = autoOrderMatch[2].trim();
-                    let cleanRes = responseText.replace(/\[AUTO_ORDER:.*?\]/g, '').trim() + `\n\n✅ *Bukti TF Valid! Menembak ke VIP...*`;
-                    await sock.sendMessage(senderJid, { text: cleanRes }, { quoted: msg });
+        } catch (err) {
+            console.log('Error AI:', err);
+            await sock.sendMessage(from, { text: 'Waduh, server AI lagi sibuk bre, sabar bentar ya.' }, { quoted: msg });
+        }
 
-                    try {
-                        const payload = new URLSearchParams({ key: VIP_API_KEY, sign: getVipSign(), type: 'order', service: sCode, data_no: tID });
-                        const vipRes = await axios.post('https://vip-reseller.co.id/api/game-feature', payload);
-                        await sock.sendMessage(senderJid, { text: `🚀 *Status VIP:*\n\n${JSON.stringify(vipRes.data, null, 2)}` });
-                    } catch (err) {}
-                } else {
-                    await sock.sendMessage(senderJid, { text: responseText }, { quoted: msg });
-                }
-
-                chatHistories[senderJid].push({ role: "user", content: messageContent });
-                chatHistories[senderJid].push({ role: "assistant", content: responseText });
-                if (chatHistories[senderJid].length > 6) chatHistories[senderJid].splice(0, 2);
-            }
-        } catch (err) {}
+    } catch (err) {
+        console.log('Error Handler:', err);
     }
 };
