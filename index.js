@@ -298,7 +298,8 @@ async function startBot() {
         version,
         logger: pino({ level: 'silent' }),
         auth: state,
-        browser: Browsers.macOS('Desktop'),
+        // 🔥 Ganti dari Browsers.macOS jadi Browsers.ubuntu (Biar Baileys gak duplikat event sync)
+        browser: Browsers.ubuntu('Chrome'),
         syncFullHistory: false
     });
 
@@ -343,7 +344,9 @@ async function startBot() {
             if (participant.includes(NOMOR_BOT)) continue;
 
             const from = msg.key.remoteJid;
-            if (!from || from === 'status@broadcast' || from.endsWith('@g.us')) continue;
+            
+            // 🛑 BLOKIR MUTLAK GRUP: Jika remoteJid berakhiran @g.us atau mengandung @g.us, langsung lewati!
+            if (!from || from === 'status@broadcast' || from.includes('@g.us') || from.endsWith('@g.us')) continue;
             if (from.includes(NOMOR_BOT)) continue;
 
             const msgTime = msg.messageTimestamp;
