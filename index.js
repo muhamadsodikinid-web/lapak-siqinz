@@ -18,6 +18,7 @@ app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Web Server standby di port $
 const SESSION_DIR = './sesi_lapak';
 
 async function startBot() {
+    // 1. Muat SESSION_ID dari Variables Railway kalau ada
     if (process.env.SESSION_ID) {
         try {
             if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR, { recursive: true });
@@ -53,7 +54,23 @@ async function startBot() {
             }
             setTimeout(startBot, 3000);
         } else if (connection === 'open') {
-            console.log('🎉 BOT LAPAK SIQINZ BERHASIL TERSAMBUNG DI RAILWAY!');
+            console.log('🎉 BOT BERHASIL TERSAMBUNG DI RAILWAY!');
+            
+            // 2. 🔥 CETAK ULANG SESSION KEY DI LOGS RAILWAY PASUDAH KONEK
+            setTimeout(async () => {
+                try {
+                    const credsPath = path.join(SESSION_DIR, 'creds.json');
+                    if (fs.existsSync(credsPath)) {
+                        const sessionKey = fs.readFileSync(credsPath).toString('utf-8');
+                        console.log('\n========================================');
+                        console.log('🔥 SESSION KEY TERBARU (MUNCUL DI LOGS) 🔥');
+                        console.log(sessionKey);
+                        console.log('========================================\n');
+                    }
+                } catch (err) {
+                    console.log('Gagal mencetak session key:', err.message);
+                }
+            }, 4000);
         }
     });
 
