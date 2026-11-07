@@ -246,16 +246,24 @@ async function handleMessage(sock, msg) {
             const groq = getGroqClient();
             const comp = await groq.chat.completions.create({
                 messages: [
-                    { role: 'system', content: `Kamu adalah Muhamad Sodikin (mahasiswa IT Pelita Bangsa 2026, owner Lapak Siqinz). Jawab obrolan natural, santai, Sunda tongkrongan Cikarang. JANGAN pernah pakai sapaan bot, JANGAN nanya balik, JANGAN bikin list. WAJIB kirim maksimal 1 kalimat pendek.` },
+                    // 🔥 PERKETAT SYSTEM PROMPT SUPAYA TIDAK KELUAR 2 KALIMAT / 2 BALASAN
+                    { role: 'system', content: `Kamu adalah Muhamad Sodikin (mahasiswa IT Pelita Bangsa 2026, owner Lapak Siqinz). Jawab obrolan natural, santai, Sunda tongkrongan Cikarang. HANYA BOLEH KIRIM SATU KATA ATAU SATU KALIMAT PENDEK SAJA. DILARANG KERAS MEMBUAT DOUBLE JAWABAN ATAU DUA KALIMAT TERPISAH. JANGAN pakai sapaan bot, JANGAN nanya balik, JANGAN bikin list.` },
                     { role: 'user', content: body }
                 ],
                 model: 'qwen/qwen3.8-27b',
-                max_tokens: 50,
-                temperature: 0.7,
+                max_tokens: 35,
+                temperature: 0.5,
             });
 
-            const reply = comp.choices[0]?.message?.content;
-            if (reply) await sock.sendMessage(from, { text: reply }, { quoted: msg });
+            let reply = comp.choices[0]?.message?.content?.trim();
+            if (reply) {
+                // 🔥 PEMBERSIH GANDA: Jika AI iseng ngasih enter (\n) atau dobel kalimat, ambil kalimat pertama saja secara paksa
+                if (reply.includes('\n')) {
+                    reply = reply.split('\n')[0].trim();
+                }
+                
+                await sock.sendMessage(from, { text: reply }, { quoted: msg });
+            }
         }
 
     } catch (err) {
@@ -327,7 +335,12 @@ async function startBot() {
 
         for (const msg of messages) {
             if (!msg || !msg.message) continue;
+            
+            // 🛑 BLOKIR MUTLAK: Jika pesan dari bot sendiri (fromMe) atau nomor bot itu sendiri
             if (msg.key.fromMe) continue;
+            
+            const participant = msg.key.participant || msg.key.remoteJid || '';
+            if (participant.includes(NOMOR_BOT)) continue;
 
             const from = msg.key.remoteJid;
             if (!from || from === 'status@broadcast' || from.endsWith('@g.us')) continue;
