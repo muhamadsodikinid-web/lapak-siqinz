@@ -4,7 +4,6 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLat
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
-const qrcode = require('qrcode-terminal');
 
 const messageHandler = require('./handler'); 
 
@@ -16,17 +15,13 @@ const PORT = process.env.PORT || 8080;
 app.get('/', (req, res) => res.send('Mesin Lapak Siqinz Aktif!'));
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Web Server standby di port ${PORT}`));
 
-const NOMOR_ADMIN = '6283142628969';
 const SESSION_DIR = './sesi_lapak';
 
 async function startBot() {
-    // 💡 FITUR BACA SESSION MENTAH DARI ENVIRONMENT VARIABLE RAILWAY
     if (process.env.SESSION_ID) {
         try {
             if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR, { recursive: true });
             const credsPath = path.join(SESSION_DIR, 'creds.json');
-            
-            // Langsung tulis isi SESSION_ID ke creds.json tanpa decode base64
             fs.writeFileSync(credsPath, process.env.SESSION_ID);
             console.log('✅ Kunci Sesi (SESSION_ID) berhasil dimuat dari Railway!');
         } catch (e) {
@@ -48,15 +43,8 @@ async function startBot() {
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
+        const { connection, lastDisconnect } = update;
         
-        if (qr) {
-            console.log('\n==================================================');
-            console.log('📷 BARKODE MUNCUL! (Jika dijalankan di lokal)');
-            qrcode.generate(qr, { small: true });
-            console.log('==================================================\n');
-        }
-
         if (connection === 'close') {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
             console.log(`⚠️ Koneksi terputus (Status: ${statusCode}). Reconnecting...`);
@@ -65,7 +53,7 @@ async function startBot() {
             }
             setTimeout(startBot, 3000);
         } else if (connection === 'open') {
-            console.log('🎉 BOT BERHASIL TERSAMBUNG DI RAILWAY!');
+            console.log('🎉 BOT LAPAK SIQINZ BERHASIL TERSAMBUNG DI RAILWAY!');
         }
     });
 
