@@ -1,12 +1,11 @@
 require('dotenv').config();
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
 const qrcode = require('qrcode-terminal');
 const axios = require('axios');
-const crypto = require('crypto');
 const { Groq } = require('groq-sdk');
 
 process.on('uncaughtException', (err) => console.error('Error:', err?.message));
@@ -20,7 +19,6 @@ app.listen(PORT, '0.0.0.0');
 const NOMOR_BOT = '6283878322624';
 const SESSION_DIR = './sesi_lapak_fresh';
 
-// Database sederhana & Sesi memori
 const userSessions = {};
 const processedIds = new Set();
 
@@ -70,14 +68,16 @@ async function startBot() {
         const msg = messages[0];
         if (!msg || !msg.message || msg.key.fromMe) return;
 
-        // GEMBOK 1: Tolak Grup & Tolak Nomor Bot Sendiri
         const from = msg.key.remoteJid;
         if (!from || from.includes('@g.us') || from.includes(NOMOR_BOT)) return;
 
-        // GEMBOK 2: Cegah ID Pesan Diproses Dobel
         if (processedIds.has(msg.key.id)) return;
         processedIds.add(msg.key.id);
         setTimeout(() => processedIds.delete(msg.key.id), 20000);
+
+        const s = userSessions[from] || (userSessions[from] = { step: 'IDLE', item: null, idGame: '', processing: false });
+        if (s.processing) return;
+        s.processing = true;
 
         try {
             const mType = Object.keys(msg.message)[0];
@@ -89,12 +89,6 @@ async function startBot() {
             const text = body.toLowerCase().trim();
             if (!text) return;
 
-            if (!userSessions[from]) {
-                userSessions[from] = { step: 'IDLE', item: null, idGame: '' };
-            }
-            const s = userSessions[from];
-
-            // 1. Alur Topup Sederhana
             if (s.step === 'IDLE' && (text.includes('topup') || text.includes('beli') || text.includes('dm'))) {
                 s.step = 'PILIH';
                 await sock.sendMessage(from, { text: 'Mau beli berapa DM? (Contoh: 70 dm atau 100 dm)' }, { quoted: msg });
@@ -102,8 +96,7 @@ async function startBot() {
             }
 
             if (s.step === 'PILIH') {
-                const found = ffProducts.find(p => text.includes(p.code.toLowerCase()) || text.includes(p.name.toLowerCase()) || text.includes(p.basePrice.toString()) || text.includes(text.replace(/[^0-9]/g, '')));
-                // Default ambil 70 kalau angka asal
+                const found = ffProducts.find(p => text.includes(p.code.toLowerCase()) || text.includes(p.name.toLowerCase()) || text.includes(p.basePrice.toString()));
                 s.item = found || ffProducts[2]; 
                 s.step = 'ID_GAME';
                 await sock.sendMessage(from, { text: `Pilihan: ${s.item.name}. Kirim ID game Free Fire lu:` }, { quoted: msg });
@@ -115,11 +108,10 @@ async function startBot() {
                 s.step = 'DONE';
                 const total = s.item.basePrice + 3000;
                 await sock.sendMessage(from, { text: `Tujuan: ${s.idGame}\nTotal: Rp ${total.toLocaleString('id-ID')}\nTransfer ke DANA: 083142628969 (Muhamad Sodikin).` }, { quoted: msg });
-                userSessions[from] = { step: 'IDLE', item: null, idGame: '' };
+                userSessions[from] = { step: 'IDLE', item: null, idGame: '', processing: false };
                 return;
             }
 
-            // 2. Chat AI Biasa (Sunda Tongkrongan Singkat)
             const groq = getGroq();
             const res = await groq.chat.completions.create({
                 messages: [
@@ -138,6 +130,8 @@ async function startBot() {
 
         } catch (e) {
             console.error('Err chat:', e.message);
+        } finally {
+            s.processing = false;
         }
     });
 }
